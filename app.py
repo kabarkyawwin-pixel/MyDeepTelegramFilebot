@@ -19,7 +19,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# ---------- Flask Server ----------
+# ---------- Flask Server (Render health check) ----------
 app = Flask(__name__)
 
 @app.route('/')
@@ -37,11 +37,11 @@ if not MONGO_URI:
     sys.exit(1)
 
 mongo_client = MongoClient(MONGO_URI)
-db = mongo_client["file_share_bot_v2"]
-file_store_collection = db["file_store"]
-users_collection = db["users"]             # stores {user_id, attempt_count, is_blocked}
-stats_collection = db["stats"]
-blocked_collection = db["blocked"]         # {user_id, reason, blocked_at}
+db = mongo_client["file_share_bot"]
+file_store_collection = db["file_store"]          # {payload: {"file_id": "...", "file_name": "..."}}
+users_collection = db["users"]                    # {user_id: ...}
+stats_collection = db["stats"]                    # {_id: "total_requests", count: N}
+click_counter_collection = db["click_counter"]    # {user_id: payload, count: N, blocked: bool}
 
 def init_stats():
     if stats_collection.count_documents({"_id": "total_requests"}) == 0:
@@ -57,41 +57,10 @@ def increment_requests():
 
 def add_user(user_id):
     if not users_collection.find_one({"user_id": user_id}):
-        users_collection.insert_one({"user_id": user_id, "attempt_count": 0, "is_blocked": False})
-
-def get_user_attempts(user_id):
-    doc = users_collection.find_one({"user_id": user_id})
-    if doc:
-        return doc.get("attempt_count", 0)
-    return 0
-
-def increment_attempt(user_id):
-    users_collection.update_one(
-        {"user_id": user_id},
-        {"$inc": {"attempt_count": 1}}
-    )
-    new_count = get_user_attempts(user_id)
-    if new_count >= 10:
-        block_user(user_id)
-    return new_count
-
-def block_user(user_id):
-    users_collection.update_one(
-        {"user_id": user_id},
-        {"$set": {"is_blocked": True}}
-    )
-    blocked_collection.update_one(
-        {"user_id": user_id},
-        {"$set": {"blocked_at": datetime.now(), "reason": "exceeded max attempts"}},
-        upsert=True
-    )
-
-def is_user_blocked(user_id):
-    doc = users_collection.find_one({"user_id": user_id})
-    return doc.get("is_blocked", False) if doc else False
+        users_collection.insert_one({"user_id": user_id})
 
 def get_all_users():
-    return [doc["user_id"] for doc in users_collection.find({"is_blocked": False}, {"user_id": 1})]
+    return [doc["user_id"] for doc in users_collection.find({}, {"user_id": 1})]
 
 def save_file_info(payload, file_id, file_name):
     file_store_collection.update_one(
@@ -106,18 +75,71 @@ def get_file_info(payload):
         return {"file_id": doc["file_id"], "file_name": doc["file_name"]}
     return None
 
+# ---------- Click counter functions ----------
+def get_click_count(user_id: int, payload: str) -> int:
+    doc = click_counter_collection.find_one({"user_id": user_id, "payload": payload})
+    return doc["count"] if doc else 0
+
+def increment_click_count(user_id: int, payload: str) -> int:
+    result = click_counter_collection.find_one_and_update(
+        {"user_id": user_id, "payload": payload},
+        {"$inc": {"count": 1}, "$setOnInsert": {"blocked": False}},
+        upsert=True,
+        return_document=True
+    )
+    return result["count"]
+
+def is_user_blocked(user_id: int, payload: str) -> bool:
+    doc = click_counter_collection.find_one({"user_id": user_id, "payload": payload})
+    return doc.get("blocked", False) if doc else False
+
+def block_user(user_id: int, payload: str):
+    click_counter_collection.update_one(
+        {"user_id": user_id, "payload": payload},
+        {"$set": {"blocked": True}}
+    )
+
+def unblock_user(user_id: int, payload: str):
+    click_counter_collection.update_one(
+        {"user_id": user_id, "payload": payload},
+        {"$set": {"blocked": False, "count": 0}}   # reset count when unblocked
+    )
+
 # ---------- Configuration from Environment ----------
 TOKEN = os.environ.get("TELEGRAM_TOKEN")
 BOT_USERNAME = os.environ.get("BOT_USERNAME")
-REQUIRED_CHANNELS = [ch.strip() for ch in os.environ.get("REQUIRED_CHANNELS", "").split(",") if ch.strip()]
-CHANNEL_INVITE_LINKS = [link.strip() for link in os.environ.get("CHANNEL_INVITE_LINKS", "").split(",") if link.strip()]
+# List of channel identifiers and their display names / invite links
+# Format: "channel_id|display_name|invite_link"
+CHANNELS_CONFIG = []
+channels_env = os.environ.get("REQUIRED_CHANNELS_CONFIG", "")
+if channels_env:
+    for item in channels_env.split(","):
+        parts = item.strip().split("|")
+        if len(parts) >= 3:
+            CHANNELS_CONFIG.append({
+                "id": parts[0],
+                "name": parts[1],
+                "invite_link": parts[2]
+            })
+# Fallback to old style if needed
+if not CHANNELS_CONFIG:
+    CHANNEL_IDS = [ch.strip() for ch in os.environ.get("REQUIRED_CHANNELS", "").split(",") if ch.strip()]
+    CHANNEL_NAMES = os.environ.get("CHANNEL_NAMES", "").split(",") if os.environ.get("CHANNEL_NAMES") else []
+    CHANNEL_INVITE_LINKS = [link.strip() for link in os.environ.get("CHANNEL_INVITE_LINKS", "").split(",") if link.strip()]
+    for i, ch_id in enumerate(CHANNEL_IDS):
+        CHANNELS_CONFIG.append({
+            "id": ch_id,
+            "name": CHANNEL_NAMES[i] if i < len(CHANNEL_NAMES) else f"Channel {i+1}",
+            "invite_link": CHANNEL_INVITE_LINKS[i] if i < len(CHANNEL_INVITE_LINKS) else None
+        })
+
 ADMIN_IDS = [int(id.strip()) for id in os.environ.get("ADMIN_ID", "").split(",") if id.strip()] if os.environ.get("ADMIN_ID") else []
-MAX_ATTEMPTS = 10
 
 def is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS
 
 maintenance_mode = False
+MAX_CLICKS = 10
 
 def generate_payload():
     return secrets.token_urlsafe(16)
@@ -131,30 +153,15 @@ async def is_member_of_channel(user_id: int, channel_id: str, context: ContextTy
         return False
 
 async def check_all_channels(user_id: int, context: ContextTypes.DEFAULT_TYPE) -> tuple:
-    missing = []
-    invite_links = []
-    for i, ch in enumerate(REQUIRED_CHANNELS):
-        if not await is_member_of_channel(user_id, ch, context):
-            missing.append(ch)
-            if i < len(CHANNEL_INVITE_LINKS):
-                invite_links.append(CHANNEL_INVITE_LINKS[i])
-            else:
-                invite_links.append(None)
-    return (len(missing) == 0, missing, invite_links)
+    missing_info = []
+    for ch in CHANNELS_CONFIG:
+        if not await is_member_of_channel(user_id, ch["id"], context):
+            missing_info.append(ch)
+    return (len(missing_info) == 0, missing_info)
 
 # ---------- Start & Deep Link Handler ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-
-    # Check if user is blocked
-    if is_user_blocked(user_id):
-        await update.message.reply_text(
-            "🚫 လူကြီးမင်းသည် ဇာတ်ကားရယူဖို့ လင့်ကိုနှိပ်တာ ၁၀ ခါပြည့်သွားလို့ ကျနော်က လူကြီးမင်းကို block လိုက်ပါသည်။\n"
-            "သင် သည် ကျနော် ၏ တောင်းဆိုထားသည့်အတိုင်း ချန်နယ်လေးကို မဝင်ထားသည့် အတွက် ဇာတ်ကားမယူနိုင်တော့ပါ။\n"
-            "နောင်တွင်ကျနော်ထံမှာ ဇာတ်ကားများကို ရနိုင်မည် မဟုတ်ပါ။\n"
-            "သာယာပျော်ရွင်သောနေလေး ဖြစ်ပါစေရှင့်။"
-        )
-        return
 
     if context.args and len(context.args) > 0:
         payload = context.args[0]
@@ -164,35 +171,52 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ ဤလင့်သည် မမှန်ကန်ပါ သို့မဟုတ် သက်တမ်းကုန်သွားပါပြီ။")
             return
 
-        # Increment attempt counter
-        attempts = increment_attempt(user_id)
-        if attempts >= MAX_ATTEMPTS:
-            # Already blocked
+        # Check if user is already blocked for this payload
+        if is_user_blocked(user_id, payload):
             await update.message.reply_text(
-                "🚫 လူကြီးမင်းသည် ဇာတ်ကားရယူဖို့ လင့်ကိုနှိပ်တာ ၁၀ ခါပြည့်သွားလို့ ကျနော်က လူကြီးမင်းကို block လိုက်ပါသည်။\n"
-                "သင် သည် ကျနော် ၏ တောင်းဆိုထားသည့်အတိုင်း ချန်နယ်လေးကို မဝင်ထားသည့် အတွက် ဇာတ်ကားမယူနိုင်တော့ပါ။\n"
-                "နောင်တွင်ကျနော်ထံမှာ ဇာတ်ကားများကို ရနိုင်မည် မဟုတ်ပါ။\n"
-                "သာယာပျော်ရွင်သောနေလေး ဖြစ်ပါစေရှင့်။"
+                "❌ လူကြီးမင်းသည် ချန်နယ်ကို မဝင်ဘဲ ဇာတ်ကားလင့်ကို ၁၀ကြိမ်နှိပ်လိုက်သည့်အတွက် ဇာတ်ကားရယူနိုင်မည်မဟုတ်ပါ။\n"
+                "ဝမ်းနည်းပါတယ်ရှင့် လူကြီးမင်းကို ကျွန်ုပ်၏ဘက်မှ block လိုက်ပါသည်။\n"
+                "သင်ချန်နယ်အားလုံးကိုဝင်ရောက်ပြီး ဇာတ်ကားလင့်ကို ပြန်နှိပ်ဖို့ အကြံပြုပါရစေ။\n"
+                "သာယာပျော်ရွင်သောနေ့လေးဖြစ်ပါစေ 🙏🙏🙏",
+                parse_mode="Markdown"
             )
             return
 
-        # Check channel membership
-        all_ok, missing, invite_links = await check_all_channels(user_id, context)
+        # Verify membership in all required channels
+        all_ok, missing_info = await check_all_channels(user_id, context)
 
+        # If not all channels joined, increment click count
         if not all_ok:
-            message = "🔒 **ဖိုင်ကို ဒေါင်းလုဒ်လုပ်ရန် အောက်ပါ Channel များအားလုံးကို ဝင်ရောက်ထားရပါမည်။**\n\n"
-            for i, ch in enumerate(missing):
-                message += f"• Channel: `{ch}`\n"
-                if i < len(invite_links) and invite_links[i]:
-                    message += f"  👉 [ဝင်ရန် နှိပ်ပါ]({invite_links[i]})\n"
-                message += "\n"
-            remaining = MAX_ATTEMPTS - attempts
-            message += f"⚠️ သင်သည် လင့်ကို {attempts}/{MAX_ATTEMPTS} ကြိမ် နှိပ်ပြီးဖြစ်သည်။ {remaining} ကြိမ်သာ ကျန်ပါသေးသည်။\n"
-            message += "Channel များအားလုံးဝင်ပြီးနောက် လင့်ကို ထပ်မံနှိပ်ပါ။"
-            await update.message.reply_text(message, parse_mode="Markdown", disable_web_page_preview=True)
-            return
+            current_count = increment_click_count(user_id, payload)
+            # If reached max clicks, block user and inform
+            if current_count >= MAX_CLICKS:
+                block_user(user_id, payload)
+                await update.message.reply_text(
+                    "❌ လူကြီးမင်းသည် ချန်နယ်ကို မဝင်ဘဲ ဇာတ်ကားလင့်ကို ၁၀ကြိမ်နှိပ်လိုက်သည့်အတွက် ဇာတ်ကားရယူနိုင်မည်မဟုတ်ပါ။\n"
+                    "ဝမ်းနည်းပါတယ်ရှင့် လူကြီးမင်းကို ကျွန်ုပ်၏ဘက်မှ block လိုက်ပါသည်။\n"
+                    "သင်ချန်နယ်အားလုံးကိုဝင်ရောက်ပြီး ဇာတ်ကားလင့်ကို ပြန်နှိပ်ဖို့ အကြံပြုပါရစေ။\n"
+                    "သာယာပျော်ရွင်သောနေ့လေးဖြစ်ပါစေ 🙏🙏🙏",
+                    parse_mode="Markdown"
+                )
+                return
+            else:
+                # Show missing channels message without click counter info
+                message = "🔒 **ဇာတ်ကားဖိုင်ကို ဒေါင်းလုဒ်လုပ်ရန် ကျေဇူးပြု၍အောက်ပါ Channel များအားလုံးကို ဝင်ထားပေးပါနော်**\n\n"
+                for ch in missing_info:
+                    message += f"📌 **{ch['name']}**\n"
+                    if ch['invite_link']:
+                        message += f"   👉 [ဝင်ရန် နှိပ်ပါ]({ch['invite_link']})\n"
+                    message += "\n"
+                message += "ကျေးဇူးပြု၍ Channel များအားလုံးကို ဝင်ပြီးနောက် ဤလင့်ကို ထပ်မံနှိပ်ပါ။"
+                await update.message.reply_text(message, parse_mode="Markdown", disable_web_page_preview=True)
+                return
 
-        # All channels joined – grant access
+        # All channels joined - now if user was blocked before, unblock them
+        if is_user_blocked(user_id, payload):
+            unblock_user(user_id, payload)
+            logger.info(f"User {user_id} unblocked after joining all channels for payload {payload}")
+
+        # Grant access
         file_id = file_info["file_id"]
         file_name = file_info["file_name"]
 
@@ -204,6 +228,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 filename=file_name,
                 caption=f"📄 ဖိုင်အမည်: {file_name}"
             )
+            # Reset click count for this user-payload after successful delivery (optional)
+            click_counter_collection.delete_one({"user_id": user_id, "payload": payload})
             add_user(user_id)
             increment_requests()
         except Exception as e:
@@ -239,6 +265,7 @@ async def newfile_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return 1
 
 async def receive_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Check for any document, video, audio, photo
     doc = update.message.document
     video = update.message.video
     audio = update.message.audio
@@ -266,13 +293,13 @@ async def receive_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
         payload = generate_payload()
         save_file_info(payload, file_obj.file_id, file_name)
         deep_link = create_deep_linked_url(BOT_USERNAME, payload)
-        # Use parse_mode=None to avoid markdown errors
         await update.message.reply_text(
             f"✅ **ဖိုင် တင်ခြင်း အောင်မြင်ပါသည်။**\n\n"
             f"**ဖိုင်အမည်:** {file_name}\n"
             f"**Deep Link:**\n{deep_link}\n\n"
             f"ဤလင့်ကို ကူးယူ၍ မျှဝေနိုင်ပါသည်။\n"
             f"အသုံးပြုသူများသည် လိုအပ်သော Channel များအားလုံးကို ဝင်ပြီးမှသာ ဖိုင်ကို ရယူနိုင်မည်။",
+            parse_mode="Markdown",
             disable_web_page_preview=True
         )
     except Exception as e:
@@ -283,17 +310,13 @@ async def cancel_newfile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("လုပ်ဆောင်ချက် ပယ်ဖျက်ပြီးပါပြီ။")
     return ConversationHandler.END
 
-# ---------- Admin Commands ----------
+# ---------- Admin Stats, Broadcast, Mute ----------
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         return
     total_users = users_collection.count_documents({})
     total_requests = get_total_requests()
-    blocked_count = blocked_collection.count_documents({})
-    await update.message.reply_text(
-        f"📊 **စာရင်းအင်း**\n\n👥 အသုံးပြုသူဦးရေ: {total_users}\n📥 တောင်းဆိုမှုအရေအတွက်: {total_requests}\n🚫 Block ခံထားရသူ: {blocked_count}",
-        parse_mode="Markdown"
-    )
+    await update.message.reply_text(f"📊 **စာရင်းအင်း**\n\n👥 အသုံးပြုသူဦးရေ: {total_users}\n📥 တောင်းဆိုမှုအရေအတွက်: {total_requests}", parse_mode="Markdown")
 
 async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
