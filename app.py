@@ -41,7 +41,7 @@ db = mongo_client["file_share_bot"]
 file_store_collection = db["file_store"]
 users_collection = db["users"]
 stats_collection = db["stats"]
-blocked_collection = db["blocked_users"]   # {user_id: True, attempts: N}
+blocked_collection = db["blocked_users"]
 
 def init_stats():
     if stats_collection.count_documents({"_id": "total_requests"}) == 0:
@@ -57,7 +57,7 @@ def increment_requests():
 
 def add_user(user_id):
     if not users_collection.find_one({"user_id": user_id}):
-        users_collection.insert_one({"user_id": user_id, "first_seen": datetime.now()})
+        users_collection.insert_one({"user_id": user_id, "first_seen": datetime.now(), "attempts": 0})
 
 def get_all_users():
     return [doc["user_id"] for doc in users_collection.find({}, {"user_id": 1})]
@@ -108,7 +108,6 @@ TOKEN = os.environ.get("TELEGRAM_TOKEN")
 BOT_USERNAME = os.environ.get("BOT_USERNAME")
 ADMIN_IDS = [int(id.strip()) for id in os.environ.get("ADMIN_ID", "").split(",") if id.strip()] if os.environ.get("ADMIN_ID") else []
 
-# Channel 4 ခု (ID, Name, Invite Link) - သင့်အတိုင်း configure လုပ်ထား
 REQUIRED_CHANNELS = [
     {"id": "-1003753299714", "name": "🎬 Movies channel main (HD Movies များ)", "invite": "https://t.me/wznmoviescollector"},
     {"id": "-1003899625672", "name": "🎬 Movies channel 2 (အရံချန်နယ်)", "invite": "https://t.me/moviesandseriesforallwzn"},
@@ -132,7 +131,6 @@ async def is_member_of_channel(user_id: int, channel_id: str, context: ContextTy
         return False
 
 async def check_all_channels(user_id: int, context: ContextTypes.DEFAULT_TYPE) -> tuple:
-    """Returns (all_joined, missing_channels_info_list)"""
     missing = []
     for ch in REQUIRED_CHANNELS:
         if not await is_member_of_channel(user_id, ch["id"], context):
@@ -151,7 +149,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ ဤလင့်သည် မမှန်ကန်ပါ သို့မဟုတ် သက်တမ်းကုန်သွားပါပြီ။")
             return
 
-        # Check if user is already blocked
         if is_user_blocked(user_id):
             await update.message.reply_text(
                 "🔒 လူကြီးမင်းသည် ချန်နယ်များကို မဝင်ဘဲ လင့်ကို ၁၀ ကြိမ်အထက်နှိပ်ထားသည့်အတွက် ကျွန်ုပ်က block လုပ်ထားပါသည်။\n"
@@ -159,17 +156,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-        # Check membership
         all_joined, missing = await check_all_channels(user_id, context)
 
         if not all_joined:
-            # Increment attempts
             increment_attempts(user_id)
             attempts = get_attempt_count(user_id)
             remaining = 10 - attempts
 
-            # Build message with channel list
-            msg = "🎬 **ဇာတ်ကားဖိုင်ကို ဒေါင်းလုဒ်လုပ်ရန် အောက်ပါ Channel များအားလုံးကို ဝင်ထားပေးပါနော်**\n\n"
+            msg = f"🎬 **ဇာတ်ကားဖိုင်ကို ဒေါင်းလုဒ်လုပ်ရန် အောက်ပါ Channel များအားလုံးကို ဝင်ထားပေးပါနော်**\n\n"
             for ch in REQUIRED_CHANNELS:
                 msg += f"• **{ch['name']}**\n"
                 msg += f"  👉 [ဝင်ရန် နှိပ်ပါ]({ch['invite']})\n\n"
@@ -178,7 +172,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             await update.message.reply_text(msg, parse_mode="Markdown", disable_web_page_preview=True)
 
-            # If attempts reached 10, block user
             if attempts >= 10:
                 block_user(user_id)
                 block_msg = (
@@ -190,8 +183,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text(block_msg)
             return
 
-        # All channels joined - grant access
-        # If previously blocked, unblock now
+        # All channels joined
         if is_user_blocked(user_id):
             unblock_user(user_id)
             await update.message.reply_text("✅ သင်သည် လိုအပ်သောချန်နယ်များအားလုံးကို ဝင်ရောက်ထားပြီးဖြစ်သောကြောင့် သင့်အား unblock လုပ်လိုက်ပါသည်။")
@@ -209,11 +201,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             add_user(user_id)
             increment_requests()
-            reset_attempts(user_id)  # reset attempts on success
+            reset_attempts(user_id)
         except Exception as e:
             await update.message.reply_text(f"❌ ဖိုင်ပို့ရာတွင် အမှား: {str(e)}")
     else:
-        # Normal /start without payload
         if is_admin(user_id):
             await show_menu(update, context)
         else:
@@ -314,6 +305,7 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
             payload = generate_payload()
             save_file_info(payload, file_obj.file_id, file_name)
             deep_link = create_deep_linked_url(BOT_USERNAME, payload)
+            # No parse_mode to avoid Markdown errors
             await update.message.reply_text(
                 f"✅ **ဖိုင် တင်ခြင်း အောင်မြင်ပါသည်။**\n\n"
                 f"**ဖိုင်အမည်:** {file_name}\n"
@@ -403,7 +395,6 @@ async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ---------- Application ----------
 application = Application.builder().token(TOKEN).build()
 
-# Handlers
 application.add_handler(CommandHandler("start", start))
 application.add_handler(CommandHandler("newfile", newfile_command))
 application.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, handle_file))
