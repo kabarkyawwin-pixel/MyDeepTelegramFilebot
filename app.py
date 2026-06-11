@@ -298,7 +298,6 @@ application.add_handler(CommandHandler("stats", stats))
 application.add_handler(CommandHandler("broadcast", broadcast))
 application.add_handler(CommandHandler("mute", mute))
 application.add_handler(CommandHandler("unmute", unmute))
-# Optional other commands
 application.add_handler(CommandHandler("help", placeholder))
 application.add_handler(CommandHandler("about", placeholder))
 
