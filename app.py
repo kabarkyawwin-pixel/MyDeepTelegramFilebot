@@ -286,7 +286,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ---------- Admin Menu ----------
 async def show_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
-        [InlineKeyboardButton("🆕 New Post", callback_data="menu_newpost")],
+        [InlineKeyboardButton("🆕 New Post (Image+Text+Video)", callback_data="menu_newpost_info")],
         [InlineKeyboardButton("🔗 New File (Deep Link)", callback_data="menu_newfile")],
         [InlineKeyboardButton("📊 Stats", callback_data="menu_stats")],
         [InlineKeyboardButton("📢 Broadcast", callback_data="menu_broadcast")],
@@ -295,7 +295,13 @@ async def show_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🔊 Unmute", callback_data="menu_unmute")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text("🤖 **Admin Menu**\n\nအောက်ပါခလုတ်များကို နှိပ်ပါ။", reply_markup=reply_markup, parse_mode="Markdown")
+    await update.message.reply_text(
+        "🤖 **Admin Menu**\n\n"
+        "အောက်ပါခလုတ်များကို နှိပ်ပါ။\n\n"
+        "📌 `/newpost` ကို တိုက်ရိုက်ရိုက်ပြီးလည်း သုံးနိုင်ပါသည်။",
+        reply_markup=reply_markup,
+        parse_mode="Markdown"
+    )
 
 async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global maintenance_mode
@@ -307,16 +313,19 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     data = query.data
-    if data == "menu_newpost":
-        await query.edit_message_text("📸 /newpost command ကို သုံးပါ။")
+    if data == "menu_newpost_info":
+        await query.edit_message_text(
+            "📸 `/newpost` command ကို ရိုက်ထည့်ပါ။\n\n"
+            "ထို့နောက် ပုံ → စာသား → Video စဉ်အတိုင်း ပို့ပါက Post နှင့် Deep Link ရရှိမည်။"
+        )
     elif data == "menu_newfile":
-        await query.edit_message_text("🔗 /newfile command ကို သုံးပါ။ (Video ပို့ပါက Deep Link ရမည်)")
+        await query.edit_message_text("🔗 `/newfile` command ကို ရိုက်ထည့်ပါ။ (Video ပို့ပါက Deep Link ရမည်)")
     elif data == "menu_stats":
         total_users = users_collection.count_documents({})
         total_requests = get_total_requests()
         await query.edit_message_text(f"📊 **စာရင်းအင်း**\n\n👥 အသုံးပြုသူဦးရေ: {total_users}\n🎬 တောင်းဆိုမှုအရေအတွက်: {total_requests}", parse_mode="Markdown")
     elif data == "menu_broadcast":
-        await query.edit_message_text("📢 /broadcast <message> ဖြင့် အသုံးပြုသူအားလုံးကို စာပို့နိုင်ပါသည်။")
+        await query.edit_message_text("📢 `/broadcast <message>` ဖြင့် အသုံးပြုသူအားလုံးကို စာပို့နိုင်ပါသည်။")
     elif data == "menu_blocklist":
         blocked = get_blocked_users()
         if not blocked:
@@ -325,7 +334,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             msg = "🚫 **Blocked Users**\n\n"
             for uid in blocked:
                 msg += f"• `{uid}`\n"
-            msg += "\n/unblock <user_id> ဖြင့် ပြန်ဖွင့်နိုင်ပါသည်။"
+            msg += "\n`/unblock <user_id>` ဖြင့် ပြန်ဖွင့်နိုင်ပါသည်။"
             await query.edit_message_text(msg, parse_mode="Markdown")
     elif data == "menu_mute":
         maintenance_mode = True
@@ -552,7 +561,7 @@ async def blocklist(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = "🚫 **Blocked Users**\n\n"
     for uid in blocked:
         msg += f"• `{uid}`\n"
-    msg += "\n/unblock <user_id> ဖြင့် ပြန်ဖွင့်နိုင်ပါသည်။"
+    msg += "\n`/unblock <user_id>` ဖြင့် ပြန်ဖွင့်နိုင်ပါသည်။"
     await update.message.reply_text(msg, parse_mode="Markdown")
 
 async def unblock(update: Update, context: ContextTypes.DEFAULT_TYPE):
