@@ -7,7 +7,7 @@ import secrets
 from datetime import datetime
 from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, ContextTypes, ConversationHandler, MessageHandler, filters
+from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters, CallbackQueryHandler
 from telegram.helpers import create_deep_linked_url
 from pymongo import MongoClient
 
@@ -229,7 +229,9 @@ async def show_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text("🤖 **Admin Menu**\n\nအောက်ပါခလုတ်များကို နှိပ်ပါ။", reply_markup=reply_markup, parse_mode="Markdown")
 
+# ✅ FIXED: global maintenance_mode at the beginning of the function
 async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global maintenance_mode  # Must be first in the function!
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
@@ -258,11 +260,9 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             msg += "\n/unblock <user_id> ဖြင့် ပြန်ဖွင့်နိုင်ပါသည်။"
             await query.edit_message_text(msg, parse_mode="Markdown")
     elif data == "menu_mute":
-        global maintenance_mode
         maintenance_mode = True
         await query.edit_message_text("🔇 Maintenance mode ဖွင့်ထားပါသည်။ (အသုံးပြုသူများ ဖိုင်ရယူနိုင်မည် မဟုတ်ပါ)")
     elif data == "menu_unmute":
-        global maintenance_mode
         maintenance_mode = False
         await query.edit_message_text("🔊 Maintenance mode ပိတ်ထားပါသည်။")
 
@@ -305,7 +305,6 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
             payload = generate_payload()
             save_file_info(payload, file_obj.file_id, file_name)
             deep_link = create_deep_linked_url(BOT_USERNAME, payload)
-            # No parse_mode to avoid Markdown errors
             await update.message.reply_text(
                 f"✅ **ဖိုင် တင်ခြင်း အောင်မြင်ပါသည်။**\n\n"
                 f"**ဖိုင်အမည်:** {file_name}\n"
@@ -373,16 +372,16 @@ async def unblock(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ User ID သည် ဂဏန်းသက်သက် ဖြစ်ရပါမည်။")
 
 async def mute(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global maintenance_mode
     if not is_admin(update.effective_user.id):
         return
-    global maintenance_mode
     maintenance_mode = True
     await update.message.reply_text("🔇 Maintenance mode ဖွင့်ထားပါသည်။ (အသုံးပြုသူများ ဖိုင်ရယူနိုင်မည် မဟုတ်ပါ)")
 
 async def unmute(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global maintenance_mode
     if not is_admin(update.effective_user.id):
         return
-    global maintenance_mode
     maintenance_mode = False
     await update.message.reply_text("🔊 Maintenance mode ပိတ်ထားပါသည်။")
 
