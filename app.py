@@ -229,9 +229,8 @@ async def show_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text("🤖 **Admin Menu**\n\nအောက်ပါခလုတ်များကို နှိပ်ပါ။", reply_markup=reply_markup, parse_mode="Markdown")
 
-# ✅ FIXED: global maintenance_mode at the beginning of the function
 async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global maintenance_mode  # Must be first in the function!
+    global maintenance_mode
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
