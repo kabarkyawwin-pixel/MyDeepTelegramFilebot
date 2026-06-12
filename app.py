@@ -120,7 +120,8 @@ REQUIRED_CHANNELS = [
     {"id": "-1003785717514", "name": "🎵 မြန်မာသီချင်းချန်နယ်", "invite": "https://t.me/wznmusiclibary"}
 ]
 
-OTHER_CHANNELS = [link.strip() for link in os.environ.get("OTHER_CHANNELS", "").split(",") if link.strip()] if os.environ.get("OTHER_CHANNELS") else []
+# OTHER_CHANNELS နှင့် MUSIC_CHANNEL_LINK တွင် **https://t.me/...** URL များသာ ထားရန်
+OTHER_CHANNELS = [link.strip() for link in os.environ.get("OTHER_CHANNELS", "").split(",") if link.strip() and link.strip().startswith("http")] if os.environ.get("OTHER_CHANNELS") else []
 MUSIC_CHANNEL_LINK = os.environ.get("MUSIC_CHANNEL_LINK", "")
 
 def is_admin(user_id: int) -> bool:
@@ -248,7 +249,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             increment_requests()
             reset_attempts(user_id)
 
-            # Invite other channels
+            # Invite other channels (only if valid URLs)
             keyboard = []
             if OTHER_CHANNELS:
                 for idx, link in enumerate(OTHER_CHANNELS, 1):
@@ -260,7 +261,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         keyboard.append([InlineKeyboardButton("🎵 မြန်မာသီချင်း ချန်နယ်", url=link)])
                     else:
                         keyboard.append([InlineKeyboardButton(f"Channel {idx}", url=link)])
-            if MUSIC_CHANNEL_LINK:
+            if MUSIC_CHANNEL_LINK and MUSIC_CHANNEL_LINK.startswith("http"):
                 keyboard.append([InlineKeyboardButton("🎵 သီချင်း/တရားတော် 🙏", url=MUSIC_CHANNEL_LINK)])
 
             if keyboard:
@@ -285,7 +286,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="Markdown"
             )
 
-# ---------- Admin Menu (Inline Keyboard) ----------
+# ---------- Admin Menu ----------
 async def show_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [InlineKeyboardButton("🆕 New Post", callback_data="menu_newpost")],
@@ -385,7 +386,7 @@ async def receive_video_for_post(update: Update, context: ContextTypes.DEFAULT_T
     video = None
     if update.message.video:
         video = update.message.video
-    elif update.message.document and update.message.document.mime_type.startswith('video/'):
+    elif update.message.document and update.message.document.mime_type and update.message.document.mime_type.startswith('video/'):
         video = update.message.document
 
     if not video:
@@ -416,7 +417,7 @@ async def receive_video_for_post(update: Update, context: ContextTypes.DEFAULT_T
                     buttons.append([InlineKeyboardButton("🎵 မြန်မာသီချင်း ချန်နယ်", url=link)])
                 else:
                     buttons.append([InlineKeyboardButton(f"Channel {idx}", url=link)])
-        if MUSIC_CHANNEL_LINK:
+        if MUSIC_CHANNEL_LINK and MUSIC_CHANNEL_LINK.startswith("http"):
             buttons.append([InlineKeyboardButton("🎵 သီချင်း/တရားတော် 🙏", url=MUSIC_CHANNEL_LINK)])
 
         reply_markup = InlineKeyboardMarkup(buttons)
@@ -489,7 +490,7 @@ async def handle_video_for_newfile(update: Update, context: ContextTypes.DEFAULT
         else:
             await update.message.reply_text("Video file တစ်ခု ပို့ပေးပါ။")
 
-# ---------- /link Command (အဟောင်း) ----------
+# ---------- /link Command ----------
 async def link_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("⛔ သင်သည် Admin မဟုတ်ပါ။")
@@ -519,7 +520,7 @@ async def handle_video_for_link(update: Update, context: ContextTypes.DEFAULT_TY
         else:
             await update.message.reply_text("Video file တစ်ခု ပို့ပေးပါ။")
 
-# ---------- /channelpost Command (Photo + long caption + video) ----------
+# ---------- /channelpost Command (fixed video handling) ----------
 CHANNELPOST_PHOTO, CHANNELPOST_VIDEO = range(2)
 
 async def channelpost_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -538,13 +539,11 @@ async def channelpost_receive_photo(update: Update, context: ContextTypes.DEFAUL
         return CHANNELPOST_PHOTO
     photo_file_id = update.message.photo[-1].file_id
     caption_text = update.message.caption or ""
-    
-    # Store photo and original caption
+
     context.user_data['channelpost_photo'] = photo_file_id
     context.user_data['channelpost_raw_caption'] = caption_text
     context.user_data['channelpost_telegraph_url'] = None
 
-    # If caption is too long (over 1024 chars), create Telegraph page
     if len(caption_text) > 1024:
         await update.message.reply_text("⏳ စာသားရှည်နေပါသည်။ Telegraph စာမျက်နှာ ဖန်တီးနေပါပြီ...")
         try:
@@ -556,17 +555,17 @@ async def channelpost_receive_photo(update: Update, context: ContextTypes.DEFAUL
             else:
                 await update.message.reply_text("❌ Telegraph ဖန်တီးရာတွင် အမှား။ စာသားကို အတိုင်းသုံးပါမည်။")
         except Exception as e:
-            logger.error(f"Telegraph error in channelpost: {e}")
-            await update.message.reply_text("❌ Telegraph စာမျက်နှာ ဖန်တီးရာတွင် ချို့ယွင်းချက်။ စာသားကို အတိုင်းသုံးပါမည်။")
-    
+            logger.error(f"Telegraph error: {e}")
+            await update.message.reply_text("❌ Telegraph စာမျက်နှာ ဖန်တီးရာတွင် ချို့ယွင်းချက်။")
     await update.message.reply_text("🎬 **Video File** ကို ပို့ပေးပါ။")
     return CHANNELPOST_VIDEO
 
 async def channelpost_receive_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
     video = None
+    # Check for video or document that is video
     if update.message.video:
         video = update.message.video
-    elif update.message.document and update.message.document.mime_type.startswith('video/'):
+    elif update.message.document and update.message.document.mime_type and update.message.document.mime_type.startswith('video/'):
         video = update.message.document
 
     if not video:
@@ -589,20 +588,20 @@ async def channelpost_receive_video(update: Update, context: ContextTypes.DEFAUL
         photo_id = context.user_data.get('channelpost_photo')
         raw_caption = context.user_data.get('channelpost_raw_caption', '')
         telegraph_url = context.user_data.get('channelpost_telegraph_url')
-        
+
         if not photo_id:
             await update.message.reply_text("ပုံ မတွေ့ပါ။ /channelpost ကို ထပ်စမ်းပါ။")
             return ConversationHandler.END
 
-        # Build final caption for channel post
+        # Build final caption
         if telegraph_url:
-            # Show short preview and link to full description
             preview = raw_caption[:300] + "..." if len(raw_caption) > 300 else raw_caption
             final_caption = f"{preview}\n\n📖 [ဇာတ်ညွှန်းအပြည့်အစုံဖတ်ရန်]({telegraph_url})"
+            parse_mode = "Markdown"
         else:
             final_caption = raw_caption
+            parse_mode = None
 
-        # Post to each channel
         success_count = 0
         for channel in POST_CHANNELS:
             try:
@@ -611,7 +610,7 @@ async def channelpost_receive_video(update: Update, context: ContextTypes.DEFAUL
                     photo=photo_id,
                     caption=final_caption,
                     reply_markup=reply_markup,
-                    parse_mode="Markdown"  # for telegraph link
+                    parse_mode=parse_mode
                 )
                 success_count += 1
                 logger.info(f"Posted to channel {channel}")
@@ -711,7 +710,7 @@ async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     await show_menu(update, context)
 
-# ---------- Placeholder commands ----------
+# ---------- Placeholders ----------
 async def schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         return
@@ -736,7 +735,6 @@ async def deleteall(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ---------- Application ----------
 application = Application.builder().token(TOKEN).build()
 
-# Conversation handlers
 newpost_handler = ConversationHandler(
     entry_points=[CommandHandler('newpost', newpost_start)],
     states={
@@ -744,7 +742,7 @@ newpost_handler = ConversationHandler(
         CAPTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_caption)],
         VIDEO_FILE: [
             MessageHandler(filters.VIDEO, receive_video_for_post),
-            MessageHandler(filters.Document.VIDEO, receive_video_for_post)
+            MessageHandler(filters.Document.ALL, receive_video_for_post)
         ],
     },
     fallbacks=[CommandHandler('cancel', cancel_newpost)],
@@ -756,13 +754,12 @@ channelpost_handler = ConversationHandler(
         CHANNELPOST_PHOTO: [MessageHandler(filters.PHOTO, channelpost_receive_photo)],
         CHANNELPOST_VIDEO: [
             MessageHandler(filters.VIDEO, channelpost_receive_video),
-            MessageHandler(filters.Document.VIDEO, channelpost_receive_video)
+            MessageHandler(filters.Document.ALL, channelpost_receive_video)
         ],
     },
     fallbacks=[CommandHandler('cancel', cancel_channelpost)],
 )
 
-# Add handlers
 application.add_handler(CommandHandler("start", start))
 application.add_handler(newpost_handler)
 application.add_handler(CommandHandler("newfile", newfile_command))
