@@ -112,7 +112,7 @@ ADMIN_IDS = [int(id.strip()) for id in os.environ.get("ADMIN_ID", "").split(",")
 # Channels to post when using /channelpost
 POST_CHANNELS = [ch.strip() for ch in os.environ.get("POST_CHANNELS", "").split(",") if ch.strip()] if os.environ.get("POST_CHANNELS") else []
 
-# Required Channels for user download (4 channels)
+# Required Channels (4 channels) - must be valid channel IDs (numeric starting with -100)
 REQUIRED_CHANNELS = [
     {"id": "-1003753299714", "name": "🎬 Movies channel main (HD Movies များ)", "invite": "https://t.me/wznmoviescollector"},
     {"id": "-1003899625672", "name": "🎬 Movies channel 2 (အရံချန်နယ်)", "invite": "https://t.me/moviesandseriesforallwzn"},
@@ -120,8 +120,11 @@ REQUIRED_CHANNELS = [
     {"id": "-1003785717514", "name": "🎵 မြန်မာသီချင်းချန်နယ်", "invite": "https://t.me/wznmusiclibary"}
 ]
 
+# Additional channel links (must be http/https URLs, not channel IDs)
 OTHER_CHANNELS = [link.strip() for link in os.environ.get("OTHER_CHANNELS", "").split(",") if link.strip() and link.strip().startswith("http")] if os.environ.get("OTHER_CHANNELS") else []
 MUSIC_CHANNEL_LINK = os.environ.get("MUSIC_CHANNEL_LINK", "")
+if MUSIC_CHANNEL_LINK and not MUSIC_CHANNEL_LINK.startswith("http"):
+    MUSIC_CHANNEL_LINK = ""  # ignore if not valid URL
 
 def is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS
@@ -248,7 +251,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             increment_requests()
             reset_attempts(user_id)
 
-            # Invite other channels (only if valid URLs)
+            # Invite other channels (only valid URLs)
             keyboard = []
             if OTHER_CHANNELS:
                 for idx, link in enumerate(OTHER_CHANNELS, 1):
@@ -260,7 +263,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         keyboard.append([InlineKeyboardButton("🎵 မြန်မာသီချင်း ချန်နယ်", url=link)])
                     else:
                         keyboard.append([InlineKeyboardButton(f"Channel {idx}", url=link)])
-            if MUSIC_CHANNEL_LINK and MUSIC_CHANNEL_LINK.startswith("http"):
+            if MUSIC_CHANNEL_LINK:
                 keyboard.append([InlineKeyboardButton("🎵 သီချင်း/တရားတော် 🙏", url=MUSIC_CHANNEL_LINK)])
 
             if keyboard:
@@ -315,7 +318,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "menu_newfile":
         await query.edit_message_text("🔗 `/newfile` command ကို သုံးပါ။ (Video ပို့ပါက Deep Link ရမည်)")
     elif data == "menu_channelpost":
-        await query.edit_message_text("📢 `/channelpost` command ကို သုံးပါ။ (ပုံ+စာသားတစ်ခါတည်း → Video → Channel 2 ခုသို့ တိုက်ရိုက်တင်မည်)")
+        await query.edit_message_text("📢 `/channelpost` command ကို သုံးပါ။ (ပုံ+စာသားတစ်ခါတည်း → Video → Channel များသို့ တိုက်ရိုက်တင်မည်)")
     elif data == "menu_stats":
         total_users = users_collection.count_documents({})
         total_requests = get_total_requests()
@@ -416,7 +419,7 @@ async def receive_video_for_post(update: Update, context: ContextTypes.DEFAULT_T
                     buttons.append([InlineKeyboardButton("🎵 မြန်မာသီချင်း ချန်နယ်", url=link)])
                 else:
                     buttons.append([InlineKeyboardButton(f"Channel {idx}", url=link)])
-        if MUSIC_CHANNEL_LINK and MUSIC_CHANNEL_LINK.startswith("http"):
+        if MUSIC_CHANNEL_LINK:
             buttons.append([InlineKeyboardButton("🎵 သီချင်း/တရားတော် 🙏", url=MUSIC_CHANNEL_LINK)])
 
         reply_markup = InlineKeyboardMarkup(buttons)
@@ -519,7 +522,7 @@ async def handle_video_for_link(update: Update, context: ContextTypes.DEFAULT_TY
         else:
             await update.message.reply_text("Video file တစ်ခု ပို့ပေးပါ။")
 
-# ---------- /channelpost Command (fixed video handling) ----------
+# ---------- /channelpost Command (FIXED) ----------
 CHANNELPOST_PHOTO, CHANNELPOST_VIDEO = range(2)
 
 async def channelpost_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -560,16 +563,16 @@ async def channelpost_receive_photo(update: Update, context: ContextTypes.DEFAUL
     return CHANNELPOST_VIDEO
 
 async def channelpost_receive_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Detect video from either video or document
     video = None
-    # Check for video or document that is video
     if update.message.video:
         video = update.message.video
     elif update.message.document and update.message.document.mime_type and update.message.document.mime_type.startswith('video/'):
         video = update.message.document
 
     if not video:
-        await update.message.reply_text("Video file တစ်ခု ပို့ပေးပါ (video file သို့မဟုတ် video document)")
-        return CHANNELPOST_VIDEO
+        await update.message.reply_text("❌ Video file တစ်ခု ပို့ပေးပါ (video file သို့မဟုတ် video document)")
+        return CHANNELPOST_VIDEO  # stay in same state
 
     try:
         file_name = getattr(video, 'file_name', None)
@@ -616,7 +619,6 @@ async def channelpost_receive_video(update: Update, context: ContextTypes.DEFAUL
                 await asyncio.sleep(1)
             except Exception as e:
                 logger.error(f"Failed to post to channel {channel}: {e}")
-                await update.message.reply_text(f"⚠️ Channel {channel} သို့ Post မတင်နိုင်ပါ။ Error: {str(e)}")
 
         await update.message.reply_text(
             f"✅ **Post တင်ခြင်း ပြီးဆုံးပါပြီ။**\n\n"
@@ -626,6 +628,7 @@ async def channelpost_receive_video(update: Update, context: ContextTypes.DEFAUL
         )
     except Exception as e:
         await update.message.reply_text(f"❌ Post တင်ရာတွင် အမှား: {str(e)}")
+        logger.exception("Error in channelpost_receive_video")
     finally:
         context.user_data.clear()
     return ConversationHandler.END
