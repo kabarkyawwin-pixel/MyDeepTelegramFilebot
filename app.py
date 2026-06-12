@@ -120,7 +120,6 @@ REQUIRED_CHANNELS = [
     {"id": "-1003785717514", "name": "🎵 မြန်မာသီချင်းချန်နယ်", "invite": "https://t.me/wznmusiclibary"}
 ]
 
-# OTHER_CHANNELS နှင့် MUSIC_CHANNEL_LINK တွင် **https://t.me/...** URL များသာ ထားရန်
 OTHER_CHANNELS = [link.strip() for link in os.environ.get("OTHER_CHANNELS", "").split(",") if link.strip() and link.strip().startswith("http")] if os.environ.get("OTHER_CHANNELS") else []
 MUSIC_CHANNEL_LINK = os.environ.get("MUSIC_CHANNEL_LINK", "")
 
@@ -617,6 +616,7 @@ async def channelpost_receive_video(update: Update, context: ContextTypes.DEFAUL
                 await asyncio.sleep(1)
             except Exception as e:
                 logger.error(f"Failed to post to channel {channel}: {e}")
+                await update.message.reply_text(f"⚠️ Channel {channel} သို့ Post မတင်နိုင်ပါ။ Error: {str(e)}")
 
         await update.message.reply_text(
             f"✅ **Post တင်ခြင်း ပြီးဆုံးပါပြီ။**\n\n"
