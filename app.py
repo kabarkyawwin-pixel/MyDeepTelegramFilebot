@@ -20,7 +20,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# ---------- Flask Server (Render health check) ----------
+# ---------- Flask Server ----------
 app = Flask(__name__)
 
 @app.route('/')
@@ -109,7 +109,10 @@ TOKEN = os.environ.get("TELEGRAM_TOKEN")
 BOT_USERNAME = os.environ.get("BOT_USERNAME")
 ADMIN_IDS = [int(id.strip()) for id in os.environ.get("ADMIN_ID", "").split(",") if id.strip()] if os.environ.get("ADMIN_ID") else []
 
-# Required Channels (Bot ရဲ့ မူလ Channel 4 ခု)
+# Channels to post when using /channelpost
+POST_CHANNELS = [ch.strip() for ch in os.environ.get("POST_CHANNELS", "").split(",") if ch.strip()] if os.environ.get("POST_CHANNELS") else []
+
+# Required Channels for user download (4 channels)
 REQUIRED_CHANNELS = [
     {"id": "-1003753299714", "name": "🎬 Movies channel main (HD Movies များ)", "invite": "https://t.me/wznmoviescollector"},
     {"id": "-1003899625672", "name": "🎬 Movies channel 2 (အရံချန်နယ်)", "invite": "https://t.me/moviesandseriesforallwzn"},
@@ -117,7 +120,6 @@ REQUIRED_CHANNELS = [
     {"id": "-1003785717514", "name": "🎵 မြန်မာသီချင်းချန်နယ်", "invite": "https://t.me/wznmusiclibary"}
 ]
 
-# Optional additional channel buttons
 OTHER_CHANNELS = [link.strip() for link in os.environ.get("OTHER_CHANNELS", "").split(",") if link.strip()] if os.environ.get("OTHER_CHANNELS") else []
 MUSIC_CHANNEL_LINK = os.environ.get("MUSIC_CHANNEL_LINK", "")
 
@@ -143,7 +145,7 @@ async def check_all_channels(user_id: int, context: ContextTypes.DEFAULT_TYPE) -
             missing.append(ch)
     return (len(missing) == 0, missing)
 
-# ---------- Telegraph Functions ----------
+# ---------- Telegraph ----------
 telegraph = Telegraph()
 try:
     telegraph.create_account(short_name=BOT_USERNAME or 'FileShareBot')
@@ -164,7 +166,7 @@ async def create_telegraph_page(title: str, content_text: str) -> str:
         logger.error(f"Telegraph error: {e}")
         return None
 
-# ---------- Start & Deep Link Handler (for users) ----------
+# ---------- Start & Deep Link Handler (unchanged) ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
 
@@ -283,16 +285,17 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="Markdown"
             )
 
-# ---------- Admin Menu (မြန်မာလို အပြည့်အစုံ) ----------
+# ---------- Admin Menu (Inline Keyboard) ----------
 async def show_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
-        [InlineKeyboardButton("📸 Channel Post အသစ်", callback_data="menu_channelpost")],
-        [InlineKeyboardButton("🔗 Video မှ Deep Link ထုတ်", callback_data="menu_newfile")],
-        [InlineKeyboardButton("📊 စာရင်းအင်း", callback_data="menu_stats")],
-        [InlineKeyboardButton("📢 အသုံးပြုသူအားလုံးကို စာပို့", callback_data="menu_broadcast")],
-        [InlineKeyboardButton("🚫 Block ထားသူများ", callback_data="menu_blocklist")],
-        [InlineKeyboardButton("🔇 Maintenance ဖွင့်", callback_data="menu_mute")],
-        [InlineKeyboardButton("🔊 Maintenance ပိတ်", callback_data="menu_unmute")]
+        [InlineKeyboardButton("🆕 New Post", callback_data="menu_newpost")],
+        [InlineKeyboardButton("🔗 New File (Deep Link)", callback_data="menu_newfile")],
+        [InlineKeyboardButton("📢 Channel Post", callback_data="menu_channelpost")],
+        [InlineKeyboardButton("📊 Stats", callback_data="menu_stats")],
+        [InlineKeyboardButton("📢 Broadcast", callback_data="menu_broadcast")],
+        [InlineKeyboardButton("🚫 Blocklist", callback_data="menu_blocklist")],
+        [InlineKeyboardButton("🔇 Mute", callback_data="menu_mute")],
+        [InlineKeyboardButton("🔊 Unmute", callback_data="menu_unmute")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text("🤖 **Admin Menu**\n\nအောက်ပါခလုတ်များကို နှိပ်ပါ။", reply_markup=reply_markup, parse_mode="Markdown")
@@ -307,10 +310,12 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     data = query.data
-    if data == "menu_channelpost":
-        await query.edit_message_text("📸 `/channelpost` command ကို သုံးပါ။ (Channel 2 ခုလုံးသို့ Post တင်ရန်)")
+    if data == "menu_newpost":
+        await query.edit_message_text("📸 `/newpost` command ကို သုံးပါ။ (Post ဖန်တီးရန်)")
     elif data == "menu_newfile":
         await query.edit_message_text("🔗 `/newfile` command ကို သုံးပါ။ (Video ပို့ပါက Deep Link ရမည်)")
+    elif data == "menu_channelpost":
+        await query.edit_message_text("📢 `/channelpost` command ကို သုံးပါ။ (ပုံ+စာသားတစ်ခါတည်း → Video → Channel 2 ခုသို့ တိုက်ရိုက်တင်မည်)")
     elif data == "menu_stats":
         total_users = users_collection.count_documents({})
         total_requests = get_total_requests()
@@ -322,7 +327,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not blocked:
             await query.edit_message_text("📊 လောလောဆယ် block ထားသူ မရှိပါ။")
         else:
-            msg = "🚫 **Block ထားသူများ**\n\n"
+            msg = "🚫 **Blocked Users**\n\n"
             for uid in blocked:
                 msg += f"• `{uid}`\n"
             msg += "\n/unblock <user_id> ဖြင့် ပြန်ဖွင့်နိုင်ပါသည်။"
@@ -334,33 +339,53 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         maintenance_mode = False
         await query.edit_message_text("🔊 Maintenance mode ပိတ်ထားပါသည်။")
 
-# ---------- /channelpost Command (ပုံနဲ့စာ တစ်ခါတည်း တောင်းပြီး Video တစ်ခါတည်း တောင်းမယ်) ----------
-POSTER_AND_CAPTION, VIDEO_FILE = range(2)
+# ---------- /newpost Command (Image + Caption + Video) ----------
+POSTER, CAPTION, VIDEO_FILE = range(3)
 
-async def channelpost_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def newpost_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("⛔ သင်သည် Admin မဟုတ်ပါ။")
         return ConversationHandler.END
-    await update.message.reply_text("📸 ဇာတ်ကားအတွက် **ပုံ** နှင့် **စာသား** ကို တစ်ခါတည်း ပို့ပေးပါ။\n\nပုံကို Photo အဖြစ်ပို့ပါ၊ စာသားကို Caption တွင် ထည့်ပေးပါ။")
-    return POSTER_AND_CAPTION
+    await update.message.reply_text("📸 ဇာတ်ကားအတွက် ပုံတစ်ပုံ ပို့ပေးပါ...")
+    return POSTER
 
-async def receive_poster_and_caption(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def receive_poster(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message.photo:
-        await update.message.reply_text("ပုံ (Photo) တစ်ပုံ ပို့ပေးပါ။")
-        return POSTER_AND_CAPTION
-    # Get the largest photo
-    poster = update.message.photo[-1].file_id
-    caption_text = update.message.caption or ""
-    context.user_data['poster'] = poster
+        await update.message.reply_text("ပုံတစ်ပုံ ပို့ပေးပါ။")
+        return POSTER
+    context.user_data['poster'] = update.message.photo[-1].file_id
+    await update.message.reply_text("✍️ ဇာတ်ကားအကြောင်း စာသား (ဇာတ်ညွှန်း) ရေးပေးပါ...\n(စာသားရှည်ပါက Telegraph တွင် အလိုအလျောက် တင်ပေးပါမည်)")
+    return CAPTION
+
+async def receive_caption(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    caption_text = update.message.text
     context.user_data['caption_full'] = caption_text
-    await update.message.reply_text("✍️ ဇာတ်ကား Video File ကို ပို့ပေးပါ...")
+    context.user_data['telegraph_url'] = None
+
+    if len(caption_text) > 1024:
+        await update.message.reply_text("⏳ စာသားရှည်နေပါသည်။ Telegraph စာမျက်နှာ ဖန်တီးနေပါပြီ...")
+        try:
+            title = f"Movie Synopsis - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+            page_url = await create_telegraph_page(title, caption_text)
+            if page_url:
+                context.user_data['telegraph_url'] = page_url
+                await update.message.reply_text(f"✅ Telegraph စာမျက်နှာ ဖန်တီးပြီးပါပြီ။\n\nဇာတ်ညွှန်းအပြည့်အစုံကို ဤလင့်တွင် ဖတ်ရှုနိုင်ပါသည်။\n{page_url}")
+            else:
+                await update.message.reply_text("❌ Telegraph စာမျက်နှာ ဖန်တီးရာတွင် အမှားရှိသည်။ စာသားကို ဆက်လက်အသုံးပြုပါမည်။")
+        except Exception as e:
+            logger.error(f"Telegraph error: {e}")
+            await update.message.reply_text("❌ Telegraph စာမျက်နှာ ဖန်တီးရာတွင် ချို့ယွင်းချက်ရှိသည်။")
+    else:
+        pass
+
+    await update.message.reply_text("🎬 Video File ကို ပို့ပေးပါ...")
     return VIDEO_FILE
 
-async def receive_video_for_channelpost(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def receive_video_for_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
     video = None
     if update.message.video:
         video = update.message.video
-    elif update.message.document and update.message.document.mime_type and update.message.document.mime_type.startswith('video/'):
+    elif update.message.document and update.message.document.mime_type.startswith('video/'):
         video = update.message.document
 
     if not video:
@@ -372,64 +397,69 @@ async def receive_video_for_channelpost(update: Update, context: ContextTypes.DE
         if not file_name:
             file_name = "ဇာတ်ကား"
 
-        # Generate payload and store file info
         payload = generate_payload()
         save_file_info(payload, video.file_id, file_name)
         deep_link = create_deep_linked_url(BOT_USERNAME, payload)
 
-        # Build button
-        button = InlineKeyboardButton("🎬 ဇာတ်ကားရယူရန်", url=deep_link)
-        reply_markup = InlineKeyboardMarkup([[button]])
+        buttons = []
+        buttons.append([InlineKeyboardButton("🎬 ဇာတ်ကားရယူရန်", url=deep_link)])
+        synopsis_url = context.user_data.get('telegraph_url')
+        if synopsis_url:
+            buttons.append([InlineKeyboardButton("📖 ဇာတ်ညွှန်းအပြည့်အစုံ ဖတ်ရန်", url=synopsis_url)])
+        if OTHER_CHANNELS:
+            for idx, link in enumerate(OTHER_CHANNELS, 1):
+                if idx == 1:
+                    buttons.append([InlineKeyboardButton("🎬 ဇာတ်ကားချန်နယ်", url=link)])
+                elif idx == 2:
+                    buttons.append([InlineKeyboardButton("👥 လူကြီးချန်နယ်", url=link)])
+                elif idx == 3:
+                    buttons.append([InlineKeyboardButton("🎵 မြန်မာသီချင်း ချန်နယ်", url=link)])
+                else:
+                    buttons.append([InlineKeyboardButton(f"Channel {idx}", url=link)])
+        if MUSIC_CHANNEL_LINK:
+            buttons.append([InlineKeyboardButton("🎵 သီချင်း/တရားတော် 🙏", url=MUSIC_CHANNEL_LINK)])
+
+        reply_markup = InlineKeyboardMarkup(buttons)
 
         poster = context.user_data.get('poster')
         caption_full = context.user_data.get('caption_full', '')
+        telegraph_url = context.user_data.get('telegraph_url')
 
         if not poster:
-            await update.message.reply_text("ပုံ မတွေ့ပါ။ /channelpost ကို ထပ်မံစတင်ပါ။")
+            await update.message.reply_text("ပုံ မတွေ့ပါ။ /newpost ကို ထပ်မံစတင်ပါ။")
             return ConversationHandler.END
 
-        # Prepare caption (shorter version for post)
-        if len(caption_full) > 1024:
+        if telegraph_url:
             preview = caption_full[:300] + "..." if len(caption_full) > 300 else caption_full
-            photo_caption = f"{preview}\n\n🔗 အပြည့်အစုံဖတ်ရန် (နောက်ပိုင်းတွင် ထည့်ပေးပါမည်)"
+            photo_caption = f"📝 ဇာတ်ကားအကျဉ်းချုပ်\n\n{preview}\n\n🔗 အပြည့်အစုံဖတ်ရန်: {telegraph_url}"
         else:
-            photo_caption = caption_full
+            photo_caption = f"📝 ဇာတ်ကားအကြောင်း\n\n{caption_full}"
 
-        # Get target channels (list from environment)
-        target_channels = os.environ.get("TARGET_CHANNELS", "").split(",")
-        target_channels = [ch.strip() for ch in target_channels if ch.strip()]
-        if not target_channels:
-            await update.message.reply_text("❌ ပို့ရန် Channel များ သတ်မှတ်ထားခြင်း မရှိပါ။ (TARGET_CHANNELS env)")
-            return ConversationHandler.END
+        await update.message.reply_photo(
+            photo=poster,
+            caption=photo_caption,
+            reply_markup=reply_markup
+        )
 
-        success_count = 0
-        for channel in target_channels:
-            try:
-                await context.bot.send_photo(
-                    chat_id=channel,
-                    photo=poster,
-                    caption=photo_caption,
-                    reply_markup=reply_markup
-                )
-                success_count += 1
-                logger.info(f"Posted to channel {channel}")
-            except Exception as e:
-                logger.error(f"Failed to post to {channel}: {e}")
-                await update.message.reply_text(f"❌ Channel {channel} သို့ ပို့ရာတွင် အမှား: {str(e)}")
+        await update.message.reply_text(
+            f"✅ **Post ဖန်တီးပြီးပါပြီ။**\n\n"
+            f"ဤ Post ကို Forward လုပ်ပြီး Channel မှာ တင်လိုက်ပါ။\n\n"
+            f"**Deep Link (ဇာတ်ကားရယူရန်):**\n{deep_link}\n\n"
+            f"ဤလင့်ကို ကူးယူ၍လည်း အသုံးပြုနိုင်ပါသည်။"
+        )
 
-        await update.message.reply_text(f"✅ Post ဖန်တီးပြီးပါပြီ။\n\nChannel {success_count} ခုသို့ အောင်မြင်စွာ ပို့ဆောင်နိုင်ခဲ့သည်။\n\n**Deep Link (ဇာတ်ကားရယူရန်):**\n{deep_link}\n\nဤလင့်ကို ကူးယူ၍လည်း အသုံးပြုနိုင်ပါသည်။")
         context.user_data.clear()
         return ConversationHandler.END
     except Exception as e:
         await update.message.reply_text(f"❌ Post ဖန်တီးရာတွင် အမှား: {str(e)}")
         return ConversationHandler.END
 
-async def cancel_channelpost(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def cancel_newpost(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("လုပ်ဆောင်ချက် ပယ်ဖျက်ပြီးပါပြီ။")
     context.user_data.clear()
     return ConversationHandler.END
 
-# ---------- /newfile Command ----------
+# ---------- /newfile Command (Video -> Deep Link) ----------
 async def newfile_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("⛔ သင်သည် Admin မဟုတ်ပါ။")
@@ -459,35 +489,94 @@ async def handle_video_for_newfile(update: Update, context: ContextTypes.DEFAULT
         else:
             await update.message.reply_text("Video file တစ်ခု ပို့ပေးပါ။")
 
-# ---------- /link Command (အဟောင်း) ----------
-async def link_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ---------- /channelpost Command (Post directly to multiple channels) ----------
+CHANNELPOST_PHOTO, CHANNELPOST_VIDEO = range(2)
+
+async def channelpost_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("⛔ သင်သည် Admin မဟုတ်ပါ။")
-        return
-    await update.message.reply_text("📤 Video file တစ်ခု ပို့ပေးပါ။ (ဒီ Video အတွက် Deep Link ထုတ်ပေးပါမည်)")
-    context.user_data['waiting_for_link'] = True
+        return ConversationHandler.END
+    if not POST_CHANNELS:
+        await update.message.reply_text("❌ POST_CHANNELS environment variable not set. Please configure target channels first.")
+        return ConversationHandler.END
+    await update.message.reply_text("📸 **ပုံနှင့် စာသား (Caption) တစ်ခါတည်း ပို့ပေးပါ။**\n\n(ပုံကို ရွေးပြီး အောက်မှာ စာသားရေးပါ)")
+    return CHANNELPOST_PHOTO
 
-async def handle_video_for_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id):
-        return
-    if context.user_data.get('waiting_for_link'):
+async def channelpost_receive_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message.photo:
+        await update.message.reply_text("ကျေးဇူးပြု၍ ပုံတစ်ပုံ ပို့ပေးပါ (စာသားပါလျှင် caption တွင် ထည့်ပါ)")
+        return CHANNELPOST_PHOTO
+    # Get photo file_id and caption (if any)
+    photo_file_id = update.message.photo[-1].file_id
+    caption = update.message.caption or ""
+    context.user_data['channelpost_photo'] = photo_file_id
+    context.user_data['channelpost_caption'] = caption
+    await update.message.reply_text("🎬 **Video File** ကို ပို့ပေးပါ။")
+    return CHANNELPOST_VIDEO
+
+async def channelpost_receive_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    video = None
+    if update.message.video:
         video = update.message.video
-        if video:
+    elif update.message.document and update.message.document.mime_type.startswith('video/'):
+        video = update.message.document
+
+    if not video:
+        await update.message.reply_text("Video file တစ်ခု ပို့ပေးပါ (video file သို့မဟot video document)")
+        return CHANNELPOST_VIDEO
+
+    try:
+        file_name = getattr(video, 'file_name', None)
+        if not file_name:
+            file_name = "ဇာတ်ကား"
+
+        # Generate Deep Link
+        payload = generate_payload()
+        save_file_info(payload, video.file_id, file_name)
+        deep_link = create_deep_linked_url(BOT_USERNAME, payload)
+
+        # Create button
+        button = InlineKeyboardButton("🎬 ဇာတ်ကားရယူရန်", url=deep_link)
+        reply_markup = InlineKeyboardMarkup([[button]])
+
+        photo_id = context.user_data.get('channelpost_photo')
+        caption_text = context.user_data.get('channelpost_caption', '')
+        if not photo_id:
+            await update.message.reply_text("ပုံ မတွေ့ပါ။ /channelpost ကို ထပ်စမ်းပါ။")
+            return ConversationHandler.END
+
+        # Post to each channel
+        success_count = 0
+        for channel in POST_CHANNELS:
             try:
-                payload = generate_payload()
-                file_name = video.file_name or "ဇာတ်ကား"
-                save_file_info(payload, video.file_id, file_name)
-                deep_link = create_deep_linked_url(BOT_USERNAME, payload)
-                await update.message.reply_text(
-                    f"🔗 **သင်၏ Deep Link**\n\n{deep_link}\n\n"
-                    f"ဤလင့်ကို နှိပ်လိုက်ရုံဖြင့် `{file_name}` ကို ရရှိမည်။\n"
-                    f"(Channel 4 ခုစလုံးဝင်ထားရန် လိုအပ်)"
+                await context.bot.send_photo(
+                    chat_id=channel,
+                    photo=photo_id,
+                    caption=caption_text,
+                    reply_markup=reply_markup
                 )
+                success_count += 1
+                logger.info(f"Posted to channel {channel}")
+                await asyncio.sleep(1)  # avoid flood
             except Exception as e:
-                await update.message.reply_text(f"❌ Deep Link ထုတ်ရာတွင် အမှား: {str(e)}")
-            context.user_data.pop('waiting_for_link', None)
-        else:
-            await update.message.reply_text("Video file တစ်ခု ပို့ပေးပါ။")
+                logger.error(f"Failed to post to channel {channel}: {e}")
+
+        await update.message.reply_text(
+            f"✅ **Post တင်ခြင်း ပြီးဆုံးပါပြီ။**\n\n"
+            f"**အောင်မြင်သော Channel:** {success_count}/{len(POST_CHANNELS)}\n"
+            f"**ဖိုင်အမည်:** {file_name}\n"
+            f"**Deep Link:**\n{deep_link}"
+        )
+    except Exception as e:
+        await update.message.reply_text(f"❌ Post တင်ရာတွင် အမှား: {str(e)}")
+    finally:
+        context.user_data.clear()
+        return ConversationHandler.END
+
+async def cancel_channelpost(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("လုပ်ဆောင်ချက် ပယ်ဖျက်ပြီးပါပြီ။")
+    context.user_data.clear()
+    return ConversationHandler.END
 
 # ---------- Other Admin Commands ----------
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -521,7 +610,7 @@ async def blocklist(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not blocked:
         await update.message.reply_text("📊 လောလောဆယ် block ထားသူ မရှိပါ။")
         return
-    msg = "🚫 **Block ထားသူများ**\n\n"
+    msg = "🚫 **Blocked Users**\n\n"
     for uid in blocked:
         msg += f"• `{uid}`\n"
     msg += "\n/unblock <user_id> ဖြင့် ပြန်ဖွင့်နိုင်ပါသည်။"
@@ -586,57 +675,42 @@ async def deleteall(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     await update.message.reply_text("⚠️ အားလုံးဖျက်ရန် (လုပ်ဆောင်ဆဲ)")
 
-# ---------- Auto Convert Channel Posts (အသစ်တင်တဲ့ Post များအတွက်) ----------
-async def auto_convert_channel_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    channel_post = update.channel_post
-    if not channel_post:
-        return
-    # Only convert if admin is the one who posted? Or always convert? We'll check if video exists
-    video = channel_post.video
-    if not video:
-        return
-    file_id = video.file_id
-    file_name = video.file_name or "ဇာတ်ကား"
-    payload = generate_payload()
-    save_file_info(payload, file_id, file_name)
-    deep_link = create_deep_linked_url(BOT_USERNAME, payload)
-    keyboard = [[InlineKeyboardButton("🎬 ဇာတ်ကားရယူရန်", url=deep_link)]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    original_caption = channel_post.caption or ""
-    new_caption = f"{original_caption}\n\n👇 ဇာတ်ကားရယူရန် အောက်ပါခလုတ်ကို နှိပ်ပါ။"
-    try:
-        await context.bot.edit_message_caption(
-            chat_id=channel_post.chat_id,
-            message_id=channel_post.message_id,
-            caption=new_caption,
-            reply_markup=reply_markup
-        )
-        logger.info(f"Auto-converted channel post {channel_post.message_id}")
-    except Exception as e:
-        logger.error(f"Auto-convert failed: {e}")
-
 # ---------- Application ----------
 application = Application.builder().token(TOKEN).build()
 
-# Conversation for /channelpost
+# Conversation handlers
+newpost_handler = ConversationHandler(
+    entry_points=[CommandHandler('newpost', newpost_start)],
+    states={
+        POSTER: [MessageHandler(filters.PHOTO, receive_poster)],
+        CAPTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_caption)],
+        VIDEO_FILE: [
+            MessageHandler(filters.VIDEO, receive_video_for_post),
+            MessageHandler(filters.Document.VIDEO, receive_video_for_post)
+        ],
+    },
+    fallbacks=[CommandHandler('cancel', cancel_newpost)],
+)
+
 channelpost_handler = ConversationHandler(
     entry_points=[CommandHandler('channelpost', channelpost_start)],
     states={
-        POSTER_AND_CAPTION: [MessageHandler(filters.PHOTO, receive_poster_and_caption)],
-        VIDEO_FILE: [
-            MessageHandler(filters.VIDEO, receive_video_for_channelpost),
-            MessageHandler(filters.Document.VIDEO, receive_video_for_channelpost)
+        CHANNELPOST_PHOTO: [MessageHandler(filters.PHOTO, channelpost_receive_photo)],
+        CHANNELPOST_VIDEO: [
+            MessageHandler(filters.VIDEO, channelpost_receive_video),
+            MessageHandler(filters.Document.VIDEO, channelpost_receive_video)
         ],
     },
     fallbacks=[CommandHandler('cancel', cancel_channelpost)],
 )
 
-# Add all handlers
+# Add handlers
 application.add_handler(CommandHandler("start", start))
-application.add_handler(channelpost_handler)
+application.add_handler(newpost_handler)
 application.add_handler(CommandHandler("newfile", newfile_command))
 application.add_handler(MessageHandler(filters.VIDEO & filters.ChatType.PRIVATE, handle_video_for_newfile))
-application.add_handler(CommandHandler("link", link_command))
+application.add_handler(channelpost_handler)
+application.add_handler(CommandHandler("link", link_command))  # old link command (video -> deep link)
 application.add_handler(MessageHandler(filters.VIDEO & filters.ChatType.PRIVATE, handle_video_for_link))
 application.add_handler(CommandHandler("menu", menu_command))
 application.add_handler(CommandHandler("stats", stats))
@@ -651,7 +725,6 @@ application.add_handler(CommandHandler("cancelschedule", cancelschedule))
 application.add_handler(CommandHandler("delete", delete_file))
 application.add_handler(CommandHandler("deleteall", deleteall))
 application.add_handler(CallbackQueryHandler(menu_callback, pattern="menu_"))
-application.add_handler(MessageHandler(filters.ChatType.CHANNEL & filters.VIDEO, auto_convert_channel_post))
 
 # ---------- Polling ----------
 def run_bot():
