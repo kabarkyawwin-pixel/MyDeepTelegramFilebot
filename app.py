@@ -109,8 +109,10 @@ TOKEN = os.environ.get("TELEGRAM_TOKEN")
 BOT_USERNAME = os.environ.get("BOT_USERNAME")
 ADMIN_IDS = [int(id.strip()) for id in os.environ.get("ADMIN_ID", "").split(",") if id.strip()] if os.environ.get("ADMIN_ID") else []
 
+# Channels to post when using /channelpost (required)
 POST_CHANNELS = [ch.strip() for ch in os.environ.get("POST_CHANNELS", "").split(",") if ch.strip()] if os.environ.get("POST_CHANNELS") else []
 
+# Required Channels for user download (4 channels)
 REQUIRED_CHANNELS = [
     {"id": "-1003753299714", "name": "🎬 Movies channel main (HD Movies များ)", "invite": "https://t.me/wznmoviescollector"},
     {"id": "-1003899625672", "name": "🎬 Movies channel 2 (အရံချန်နယ်)", "invite": "https://t.me/moviesandseriesforallwzn"},
@@ -118,6 +120,7 @@ REQUIRED_CHANNELS = [
     {"id": "-1003785717514", "name": "🎵 မြန်မာသီချင်းချန်နယ်", "invite": "https://t.me/wznmusiclibary"}
 ]
 
+# Additional channels for buttons in newpost (using env variable OTHER_CHANNELS)
 OTHER_CHANNELS = [link.strip() for link in os.environ.get("OTHER_CHANNELS", "").split(",") if link.strip() and link.strip().startswith("http")] if os.environ.get("OTHER_CHANNELS") else []
 MUSIC_CHANNEL_LINK = os.environ.get("MUSIC_CHANNEL_LINK", "")
 if MUSIC_CHANNEL_LINK and not MUSIC_CHANNEL_LINK.startswith("http"):
@@ -341,7 +344,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "menu_batchlink":
         await query.edit_message_text("📦 `/batchlink` command ကို သုံးပါ။ (Video များစုပြီး `/done` ဖြင့် Deep Link စာရင်းရယူရန်)")
 
-# ---------- /newpost Command ----------
+# ---------- /newpost Command (Updated: Button for telegraph only, no link in caption) ----------
 POSTER, CAPTION, VIDEO_FILE = range(3)
 
 async def newpost_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -403,21 +406,26 @@ async def receive_video_for_post(update: Update, context: ContextTypes.DEFAULT_T
         save_file_info(payload, video.file_id, file_name)
         deep_link = create_deep_linked_url(BOT_USERNAME, payload)
 
+        # Build buttons: first button always movie download
         buttons = []
         buttons.append([InlineKeyboardButton("🎬 ဇာတ်ကားရယူရန်", url=deep_link)])
+
+        # Second button for telegraph synopsis if available
         synopsis_url = context.user_data.get('telegraph_url')
         if synopsis_url:
             buttons.append([InlineKeyboardButton("📖 ဇာတ်ညွှန်းအပြည့်အစုံ ဖတ်ရန်", url=synopsis_url)])
+
+        # Channel buttons from OTHER_CHANNELS (expected order: channel2, adult, music)
         if OTHER_CHANNELS:
-            for idx, link in enumerate(OTHER_CHANNELS, 1):
-                if idx == 1:
-                    buttons.append([InlineKeyboardButton("🎬 ဇာတ်ကားချန်နယ်", url=link)])
-                elif idx == 2:
-                    buttons.append([InlineKeyboardButton("👥 လူကြီးချန်နယ်", url=link)])
-                elif idx == 3:
-                    buttons.append([InlineKeyboardButton("🎵 မြန်မာသီချင်း ချန်နယ်", url=link)])
+            # Map index to desired names
+            channel_names = ["🎬 MoviesChannel 2", "🔞 လူကြီးချန်နယ်", "🎵 မြန်မာသီချင်းချန်နယ်"]
+            for idx, link in enumerate(OTHER_CHANNELS):
+                if idx < len(channel_names):
+                    buttons.append([InlineKeyboardButton(channel_names[idx], url=link)])
                 else:
-                    buttons.append([InlineKeyboardButton(f"Channel {idx}", url=link)])
+                    buttons.append([InlineKeyboardButton(f"Channel {idx+1}", url=link)])
+
+        # Additional music channel link if separate
         if MUSIC_CHANNEL_LINK:
             buttons.append([InlineKeyboardButton("🎵 သီချင်း/တရားတော် 🙏", url=MUSIC_CHANNEL_LINK)])
 
@@ -431,12 +439,15 @@ async def receive_video_for_post(update: Update, context: ContextTypes.DEFAULT_T
             await update.message.reply_text("ပုံ မတွေ့ပါ။ /newpost ကို ထပ်မံစတင်ပါ။")
             return ConversationHandler.END
 
+        # Build photo caption without telegraph link (only short preview if needed)
         if telegraph_url:
+            # Show only short preview in caption, full synopsis via button
             preview = caption_full[:300] + "..." if len(caption_full) > 300 else caption_full
-            photo_caption = f"📝 ဇာတ်ကားအကျဉ်းချုပ်\n\n{preview}\n\n🔗 အပြည့်အစုံဖတ်ရန်: {telegraph_url}"
+            photo_caption = f"📝 ဇာတ်ကားအကျဉ်းချုပ်\n\n{preview}"
         else:
             photo_caption = f"📝 ဇာတ်ကားအကြောင်း\n\n{caption_full}"
 
+        # Send photo with buttons
         await update.message.reply_photo(
             photo=poster,
             caption=photo_caption,
