@@ -111,7 +111,6 @@ ADMIN_IDS = [int(id.strip()) for id in os.environ.get("ADMIN_ID", "").split(",")
 
 POST_CHANNELS = [ch.strip() for ch in os.environ.get("POST_CHANNELS", "").split(",") if ch.strip()] if os.environ.get("POST_CHANNELS") else []
 
-# Required Channels (4 channels)
 REQUIRED_CHANNELS = [
     {"id": "-1003753299714", "name": "🎬 Movies channel main (HD Movies များ)", "invite": "https://t.me/wznmoviescollector"},
     {"id": "-1003899625672", "name": "🎬 Movies channel 2 (အရံချန်နယ်)", "invite": "https://t.me/moviesandseriesforallwzn"},
@@ -119,10 +118,8 @@ REQUIRED_CHANNELS = [
     {"id": "-1003785717514", "name": "🎵 မြန်မာသီချင်းချန်နယ်", "invite": "https://t.me/wznmusiclibary"}
 ]
 
-OTHER_CHANNELS = [link.strip() for link in os.environ.get("OTHER_CHANNELS", "").split(",") if link.strip() and link.strip().startswith("http")] if os.environ.get("OTHER_CHANNELS") else []
-MUSIC_CHANNEL_LINK = os.environ.get("MUSIC_CHANNEL_LINK", "")
-if MUSIC_CHANNEL_LINK and not MUSIC_CHANNEL_LINK.startswith("http"):
-    MUSIC_CHANNEL_LINK = ""
+OTHER_CHANNELS = []  # Not used anymore, custom buttons are hardcoded
+MUSIC_CHANNEL_LINK = ""  # Not used
 
 def is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS
@@ -249,23 +246,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             increment_requests()
             reset_attempts(user_id)
 
-            # Build channel invite buttons
+            # Channel invite buttons after receiving movie (if any)
             keyboard = []
-            # Required channels (4) are already invited in the message above, so we don't need to repeat
-            # But we add additional channel links if any
-            if OTHER_CHANNELS:
-                for idx, link in enumerate(OTHER_CHANNELS, 1):
-                    if idx == 1:
-                        keyboard.append([InlineKeyboardButton("🎬 MoviesChannel 2", url=link)])
-                    elif idx == 2:
-                        keyboard.append([InlineKeyboardButton("🔞 လူကြီးချန်နယ်", url=link)])
-                    elif idx == 3:
-                        keyboard.append([InlineKeyboardButton("🎵 မြန်မာသီချင်းချန်နယ်", url=link)])
-                    else:
-                        keyboard.append([InlineKeyboardButton(f"Channel {idx}", url=link)])
-            if MUSIC_CHANNEL_LINK:
-                keyboard.append([InlineKeyboardButton("🎵 သီချင်း/တရားတော် 🙏", url=MUSIC_CHANNEL_LINK)])
-
+            # We can add channel invite buttons here if needed
             if keyboard:
                 reply_markup = InlineKeyboardMarkup(keyboard)
                 await context.bot.send_message(
@@ -345,7 +328,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "menu_batchlink":
         await query.edit_message_text("📦 `/batchlink` command ကို သုံးပါ။ (Video များစုပြီး `/done` ဖြင့် Deep Link စာရင်းရယူရန်)")
 
-# ---------- /newpost Command (Fixed: no caption on photo, separate text message, buttons with custom names) ----------
+# ---------- /newpost Command (FIXED: no telegraph link in text, only button, and fixed caption length) ----------
 POSTER, CAPTION, VIDEO_FILE = range(3)
 
 async def newpost_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -407,32 +390,21 @@ async def receive_video_for_post(update: Update, context: ContextTypes.DEFAULT_T
         save_file_info(payload, video.file_id, file_name)
         deep_link = create_deep_linked_url(BOT_USERNAME, payload)
 
-        # Build buttons array with custom channel names
+        # --- Build buttons (no telegraph link in text) ---
         buttons = []
-        # Main download button
+        # 1. Download button
         buttons.append([InlineKeyboardButton("🎬 ဇာတ်ကားရယူရန်", url=deep_link)])
-
-        # Synopsis button if Telegraph was used
+        
+        # 2. Telegraph button if synopsis exists
         synopsis_url = context.user_data.get('telegraph_url')
         if synopsis_url:
             buttons.append([InlineKeyboardButton("📖 ဇာတ်ညွှန်းအပြည့်အစုံ ဖတ်ရန်", url=synopsis_url)])
-
-        # Additional channel buttons using OTHER_CHANNELS (from env)
-        # These are the three channels: MoviesChannel 2, လူကြီးချန်နယ်, မြန်မာသီချင်းချန်နယ်
-        # The order in OTHER_CHANNELS should match: first = moviesandseriesforallwzn, second = everyboyhobby, third = wznmusiclibary
-        if OTHER_CHANNELS:
-            # We'll assign names based on position
-            if len(OTHER_CHANNELS) >= 1:
-                buttons.append([InlineKeyboardButton("🎬 MoviesChannel 2", url=OTHER_CHANNELS[0])])
-            if len(OTHER_CHANNELS) >= 2:
-                buttons.append([InlineKeyboardButton("🔞 လူကြီးချန်နယ်", url=OTHER_CHANNELS[1])])
-            if len(OTHER_CHANNELS) >= 3:
-                buttons.append([InlineKeyboardButton("🎵 မြန်မာသီချင်းချန်နယ်", url=OTHER_CHANNELS[2])])
-
-        # Optional extra music channel from env
-        if MUSIC_CHANNEL_LINK:
-            buttons.append([InlineKeyboardButton("🎵 သီချင်း/တရားတော် 🙏", url=MUSIC_CHANNEL_LINK)])
-
+        
+        # 3. Fixed channel buttons
+        buttons.append([InlineKeyboardButton("🎬 MoviesChannel 2", url="https://t.me/moviesandseriesforallwzn")])
+        buttons.append([InlineKeyboardButton("🔞 လူကြီးချန်နယ်", url="https://t.me/everyboyhobby")])
+        buttons.append([InlineKeyboardButton("🎵 မြန်မာသီချင်းချန်နယ်", url="https://t.me/wznmusiclibary")])
+        
         reply_markup = InlineKeyboardMarkup(buttons)
 
         poster = context.user_data.get('poster')
@@ -443,25 +415,31 @@ async def receive_video_for_post(update: Update, context: ContextTypes.DEFAULT_T
             await update.message.reply_text("ပုံ မတွေ့ပါ။ /newpost ကို ထပ်မံစတင်ပါ။")
             return ConversationHandler.END
 
-        # === FIX: Send photo WITHOUT caption (to avoid "Message caption is too long") ===
-        await update.message.reply_photo(photo=poster, reply_markup=reply_markup)
-
-        # Then send the caption text as a separate message (full text or with Telegraph link preview)
+        # --- Build caption for photo (NO telegraph link in text) ---
         if telegraph_url:
-            # Only send a short preview + link, not the full text
+            # Show only short preview, but no link in text (link is in button)
             preview = caption_full[:300] + "..." if len(caption_full) > 300 else caption_full
-            text_message = f"📝 **ဇာတ်ကားအကျဉ်းချုပ်**\n\n{preview}\n\n🔗 [ဇာတ်ညွှန်းအပြည့်အစုံဖတ်ရန်]({telegraph_url})"
-            await update.message.reply_text(text_message, parse_mode="Markdown")
+            photo_caption = f"📝 **ဇာတ်ကားအကျဉ်းချုပ်**\n\n{preview}"
         else:
-            # Send full text (within 4096 limit, but Telegram can handle)
-            await update.message.reply_text(f"📝 **ဇာတ်ကားအကြောင်း**\n\n{caption_full}", parse_mode="Markdown")
+            # If caption is short, show full caption
+            photo_caption = f"📝 **ဇာတ်ကားအကြောင်း**\n\n{caption_full}"
+        
+        # Split if caption too long (Telegram limit 1024 for photo caption)
+        if len(photo_caption) > 1024:
+            photo_caption = photo_caption[:1021] + "..."
 
-        # Optional: also send a message confirming completion
+        await update.message.reply_photo(
+            photo=poster,
+            caption=photo_caption,
+            reply_markup=reply_markup
+        )
+
+        # No extra message with telegraph link
         await update.message.reply_text(
             f"✅ **Post ဖန်တီးပြီးပါပြီ။**\n\n"
-            f"ဤ Message များ (ပုံ + စာသား) ကို **Forward** လုပ်ပြီး Channel မှာ တင်လိုက်ပါ။\n\n"
+            f"ဤ Post ကို Forward လုပ်ပြီး Channel မှာ တင်လိုက်ပါ။\n\n"
             f"**Deep Link (ဇာတ်ကားရယူရန်):**\n{deep_link}\n\n"
-            f"**မှတ်ချက်:** ဇာတ်ညွှန်းအပြည့်အစုံဖတ်ရန် ခလုတ်ကို နှိပ်ပါ။"
+            f"ဤလင့်ကို ကူးယူ၍လည်း အသုံးပြုနိုင်ပါသည်။"
         )
 
         context.user_data.clear()
@@ -475,7 +453,7 @@ async def cancel_newpost(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
     return ConversationHandler.END
 
-# ---------- /newfile & /link commands (unchanged but kept for completeness) ----------
+# ---------- /newfile Command ----------
 async def newfile_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("⛔ သင်သည် Admin မဟုတ်ပါ။")
@@ -505,6 +483,7 @@ async def handle_video_for_newfile(update: Update, context: ContextTypes.DEFAULT
         else:
             await update.message.reply_text("Video file တစ်ခု ပို့ပေးပါ။")
 
+# ---------- /link Command ----------
 async def link_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("⛔ သင်သည် Admin မဟုတ်ပါ။")
@@ -599,7 +578,7 @@ async def cancel_batchlink(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
     return ConversationHandler.END
 
-# ---------- /channelpost Command (fixed) ----------
+# ---------- /channelpost Command (unchanged but keep for compatibility) ----------
 CHANNELPOST_PHOTO, CHANNELPOST_VIDEO = range(2)
 
 async def channelpost_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
