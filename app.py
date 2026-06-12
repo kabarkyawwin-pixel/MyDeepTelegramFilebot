@@ -166,7 +166,7 @@ async def create_telegraph_page(title: str, content_text: str) -> str:
         logger.error(f"Telegraph error: {e}")
         return None
 
-# ---------- Start & Deep Link Handler (unchanged, keep as before) ----------
+# ---------- Start & Deep Link Handler ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
 
@@ -341,7 +341,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "menu_batchlink":
         await query.edit_message_text("📦 `/batchlink` command ကို သုံးပါ။ (Video များစုပြီး `/done` ဖြင့် Deep Link စာရင်းရယူရန်)")
 
-# ---------- /newpost Command (unchanged) ----------
+# ---------- /newpost Command ----------
 POSTER, CAPTION, VIDEO_FILE = range(3)
 
 async def newpost_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -521,7 +521,7 @@ async def handle_video_for_link(update: Update, context: ContextTypes.DEFAULT_TY
         else:
             await update.message.reply_text("Video file တစ်ခု ပို့ပေးပါ။")
 
-# ---------- /batchlink Command (Enhanced) ----------
+# ---------- /batchlink Command (Enhanced for Media Group & Forward) ----------
 BATCHLINK_VIDEO = range(1)
 
 async def batchlink_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -532,7 +532,8 @@ async def batchlink_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "📦 **Batch Deep Link Generator**\n\n"
         "Video ဖိုင်များကို **တစ်ခုချင်းစီ** ဆက်တိုက်ပို့ပါ။\n"
-        "(Forward လုပ်ထားသော Video များကိုလည်း ပို့နိုင်ပါသည်။)\n"
+        "(Media Group (ဓာတ်ပုံအုပ်စု) အနေနဲ့ တစ်ခါတည်း မပို့ပါနှင့်။)\n"
+        "Forward လုပ်ထားသော Video များကိုလည်း ပို့နိုင်ပါသည်။\n"
         "ပို့ပြီးပါက `/done` ဟုရိုက်ပါ။\n"
         "ဖျက်သိမ်းရန် `/cancel` ရိုက်ပါ။\n\n"
         "စတင်ရန် Video ဖိုင်တစ်ခု ပို့ပါ။"
@@ -543,7 +544,6 @@ async def batchlink_receive_video(update: Update, context: ContextTypes.DEFAULT_
     if not is_admin(update.effective_user.id):
         return ConversationHandler.END
 
-    # Try to extract video from different possible sources
     video = None
     file_name = None
 
@@ -551,17 +551,17 @@ async def batchlink_receive_video(update: Update, context: ContextTypes.DEFAULT_
     if update.message.video:
         video = update.message.video
         file_name = video.file_name or "video.mp4"
-    # Case 2: Document that is a video
+    # Case 2: Document that is a video (including forwarded documents)
     elif update.message.document and update.message.document.mime_type and update.message.document.mime_type.startswith('video/'):
         video = update.message.document
         file_name = video.file_name or "video.mp4"
-    # Case 3: Media group (album) - Telegram sends multiple messages; we handle each separately
-    # No special handling needed because each message in album will be received individually.
+    # Case 3: If the message has no video, but might be a forwarded message that contains video?
+    # The above two cases already cover most forwarded videos because forwarded video still appears as video or document.
 
     if not video:
         await update.message.reply_text(
             "❌ ကျေးဇူးပြု၍ **Video file** တစ်ခု ပို့ပေးပါ။\n"
-            "(Forward လုပ်ထားသော Video များကို တစ်ခုချင်းစီ ပို့ပါ။ ဓာတ်ပုံအုပ်စု (Media Group) အနေနဲ့ မပို့ပါနှင့်)"
+            "(Media Group (ဓာတ်ပုံအုပ်စု) အနေနဲ့ မပို့ပါနှင့်။ တစ်ခုချင်းစီ ခွဲ၍ ပို့ပါ။)"
         )
         return BATCHLINK_VIDEO
 
@@ -601,7 +601,7 @@ async def cancel_batchlink(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
     return ConversationHandler.END
 
-# ---------- /channelpost Command (fixed) ----------
+# ---------- /channelpost Command ----------
 CHANNELPOST_PHOTO, CHANNELPOST_VIDEO = range(2)
 
 async def channelpost_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -707,7 +707,7 @@ async def cancel_channelpost(update: Update, context: ContextTypes.DEFAULT_TYPE)
     context.user_data.clear()
     return ConversationHandler.END
 
-# ---------- Other Admin Commands (stats, broadcast, etc.) ----------
+# ---------- Other Admin Commands ----------
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         return
