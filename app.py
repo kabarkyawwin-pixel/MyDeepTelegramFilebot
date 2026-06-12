@@ -39,8 +39,7 @@ if not MONGO_URI:
 
 mongo_client = MongoClient(MONGO_URI)
 db = mongo_client["file_share_bot_v2"]
-file_store_collection = db["file_store"]          # for single files
-collection_store_collection = db["collection_store"]  # for collections of files
+file_store_collection = db["file_store"]
 users_collection = db["users"]
 stats_collection = db["stats"]
 blocked_collection = db["blocked_users"]
@@ -77,20 +76,6 @@ def get_file_info(payload):
         return {"file_id": doc["file_id"], "file_name": doc["file_name"]}
     return None
 
-def save_collection(payload, files_list):
-    """Save a collection of files (list of {file_id, file_name})"""
-    collection_store_collection.update_one(
-        {"payload": payload},
-        {"$set": {"files": files_list}},
-        upsert=True
-    )
-
-def get_collection(payload):
-    doc = collection_store_collection.find_one({"payload": payload})
-    if doc:
-        return doc.get("files", [])
-    return None
-
 # ---------- Blocked users helpers ----------
 def is_user_blocked(user_id: int) -> bool:
     return blocked_collection.find_one({"user_id": user_id}) is not None
@@ -124,8 +109,10 @@ TOKEN = os.environ.get("TELEGRAM_TOKEN")
 BOT_USERNAME = os.environ.get("BOT_USERNAME")
 ADMIN_IDS = [int(id.strip()) for id in os.environ.get("ADMIN_ID", "").split(",") if id.strip()] if os.environ.get("ADMIN_ID") else []
 
+# Channels to post when using /channelpost
 POST_CHANNELS = [ch.strip() for ch in os.environ.get("POST_CHANNELS", "").split(",") if ch.strip()] if os.environ.get("POST_CHANNELS") else []
 
+# Required Channels (4 channels)
 REQUIRED_CHANNELS = [
     {"id": "-1003753299714", "name": "🎬 Movies channel main (HD Movies များ)", "invite": "https://t.me/wznmoviescollector"},
     {"id": "-1003899625672", "name": "🎬 Movies channel 2 (အရံချန်နယ်)", "invite": "https://t.me/moviesandseriesforallwzn"},
@@ -181,67 +168,63 @@ async def create_telegraph_page(title: str, content_text: str) -> str:
         logger.error(f"Telegraph error: {e}")
         return None
 
-# ---------- Start & Deep Link Handler (support both single and collection) ----------
+# ---------- Start & Deep Link Handler ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
 
     if context.args and len(context.args) > 0:
         payload = context.args[0]
-        
-        # First try as collection
-        collection = get_collection(payload)
-        if collection:
-            # It's a collection
-            if is_user_blocked(user_id):
-                await update.message.reply_text(
-                    "🔒 လူကြီးမင်းသည် ချန်နယ်များကို မဝင်ဘဲ လင့်ကို ၁၀ ကြိမ်အထက်နှိပ်ထားသည့်အတွက် ကျွန်ုပ်က block လုပ်ထားပါသည်။\n"
-                    "ကျေးဇူးပြု၍ လိုအပ်သော ချန်နယ်များအားလုံးကို ဝင်ပြီးနောက် ကျွန်ုပ်ထံ ဆက်သွယ်ပါ။"
+        file_info = get_file_info(payload)
+        if not file_info:
+            await update.message.reply_text("❌ ဤလင့်သည် မမှန်ကန်ပါ သို့မဟုတ် သက်တမ်းကုန်သွားပါပြီ။")
+            return
+
+        if is_user_blocked(user_id):
+            await update.message.reply_text(
+                "🔒 လူကြီးမင်းသည် ချန်နယ်များကို မဝင်ဘဲ လင့်ကို ၁၀ ကြိမ်အထက်နှိပ်ထားသည့်အတွက် ကျွန်ုပ်က block လုပ်ထားပါသည်။\n"
+                "ကျေးဇူးပြု၍ လိုအပ်သော ချန်နယ်များအားလုံးကို ဝင်ပြီးနောက် ကျွန်ုပ်ထံ ဆက်သွယ်ပါ။"
+            )
+            return
+
+        all_joined, missing = await check_all_channels(user_id, context)
+        if not all_joined:
+            increment_attempts(user_id)
+            attempts = get_attempt_count(user_id)
+            remaining = 10 - attempts
+
+            msg = "🎬 **ဇာတ်ကားဖိုင်ကို ဒေါင်းလုဒ်လုပ်ရန် အောက်ပါ Channel များအားလုံးကို ဝင်ထားပေးပါနော်**\n\n"
+            for ch in REQUIRED_CHANNELS:
+                msg += f"• **{ch['name']}**\n"
+                msg += f"  👉 [ဝင်ရန် နှိပ်ပါ]({ch['invite']})\n\n"
+            msg += f"⚠️ သင်သည် ဤလင့်ကို **{attempts}/10** ကြိမ် နှိပ်ပြီးဖြစ်သည်။ {remaining} ကြိမ်သာ ကျန်ပါသေးသည်။\n"
+            msg += "Channel များအားလုံးဝင်ပြီးနောက် လင့်ကို ထပ်မံနှိပ်ပါ။"
+
+            await update.message.reply_text(msg, parse_mode="Markdown", disable_web_page_preview=True)
+
+            if attempts >= 10:
+                block_user(user_id)
+                block_msg = (
+                    "🚫 **လူကြီးမင်းသည် ချန်နယ်ကို မဝင်ဘဲ ဇာတ်ကားလင့်ကို ၁၀ ကြိမ်နှိပ်လိုက်သည့်အတွက် ဇာတ်ကားရယူနိုင်မည် မဟုတ်ပါ။**\n\n"
+                    "ဝမ်းနည်းပါတယ်ရှင့် လူကြီးမင်းကို ကျွန်ုပ်၏ဘက်မှ block လိုက်ပါသည်။\n"
+                    "သာယာပျော်ရွင်သောနေ့လေးဖြစ်ပါစေ 🙏🙏🙏"
                 )
-                return
+                await update.message.reply_text(block_msg)
+            return
 
-            all_joined, missing = await check_all_channels(user_id, context)
-            if not all_joined:
-                increment_attempts(user_id)
-                attempts = get_attempt_count(user_id)
-                remaining = 10 - attempts
+        if is_user_blocked(user_id):
+            unblock_user(user_id)
+            await update.message.reply_text("✅ သင်သည် လိုအပ်သောချန်နယ်များအားလုံးကို ဝင်ရောက်ထားပြီးဖြစ်သောကြောင့် သင့်အား unblock လုပ်လိုက်ပါသည်။")
 
-                msg = "🎬 **ဇာတ်ကားဖိုင်များကို ဒေါင်းလုဒ်လုပ်ရန် အောက်ပါ Channel များအားလုံးကို ဝင်ထားပေးပါနော်**\n\n"
-                for ch in REQUIRED_CHANNELS:
-                    msg += f"• **{ch['name']}**\n"
-                    msg += f"  👉 [ဝင်ရန် နှိပ်ပါ]({ch['invite']})\n\n"
-                msg += f"⚠️ သင်သည် ဤလင့်ကို **{attempts}/10** ကြိမ် နှိပ်ပြီးဖြစ်သည်။ {remaining} ကြိမ်သာ ကျန်ပါသေးသည်။\n"
-                msg += "Channel များအားလုံးဝင်ပြီးနောက် လင့်ကို ထပ်မံနှိပ်ပါ။"
-                await update.message.reply_text(msg, parse_mode="Markdown", disable_web_page_preview=True)
-                if attempts >= 10:
-                    block_user(user_id)
-                    block_msg = (
-                        "🚫 **လူကြီးမင်းသည် ချန်နယ်ကို မဝင်ဘဲ ဇာတ်ကားလင့်ကို ၁၀ ကြိမ်နှိပ်လိုက်သည့်အတွက် ဇာတ်ကားရယူနိုင်မည် မဟုတ်ပါ။**\n\n"
-                        "ဝမ်းနည်းပါတယ်ရှင့် လူကြီးမင်းကို ကျွန်ုပ်၏ဘက်မှ block လိုက်ပါသည်။\n"
-                        "သာယာပျော်ရွင်သောနေ့လေးဖြစ်ပါစေ 🙏🙏🙏"
-                    )
-                    await update.message.reply_text(block_msg)
-                return
+        file_id = file_info["file_id"]
+        file_name = file_info["file_name"]
 
-            if is_user_blocked(user_id):
-                unblock_user(user_id)
-                await update.message.reply_text("✅ သင်သည် လိုအပ်သောချန်နယ်များအားလုံးကို ဝင်ရောက်ထားပြီးဖြစ်သောကြောင့် သင့်အား unblock လုပ်လိုက်ပါသည်။")
-
-            # Send all files in collection
-            await update.message.reply_text(f"📦 **သင်၏ ဇာတ်ကားအစု ({len(collection)} ဖိုင်)** ပို့ပေးနေပါပြီ...")
-            sent_messages = []
-            for idx, file_info in enumerate(collection, 1):
-                try:
-                    msg = await context.bot.send_video(
-                        chat_id=user_id,
-                        video=file_info["file_id"],
-                        caption=f"🎬 ဇာတ်ကား {idx}/{len(collection)} - {file_info['file_name']}"
-                    )
-                    sent_messages.append(msg.message_id)
-                except Exception as e:
-                    logger.error(f"Failed to send file {idx}: {e}")
-                    await context.bot.send_message(chat_id=user_id, text=f"❌ ဖိုင် {idx} ပို့ရာတွင် အမှား: {str(e)}")
-            
-            # Warning message
+        try:
+            await update.message.reply_text(f"🎬 {file_name} ပို့ပေးနေပါပြီ...")
+            video_msg = await context.bot.send_video(
+                chat_id=user_id,
+                video=file_id,
+                caption=f"🎬 သင့်ဇာတ်ကား - {file_name}"
+            )
             warning_text = (
                 "⚠️ ⚠️ ⚠️ အရေးကြီးပါတယ် ⚠️ ⚠️ ⚠️\n\n"
                 "ဤရုပ်ရှင်ဖိုင်များ/ဗီဒီယိုများကို 5 မိနစ်အတွင်း (မူပိုင်ခွင့်ပြဿနာများကြောင့်) ဖျက်ပါမည်။\n\n"
@@ -258,8 +241,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await asyncio.sleep(300)
                 try:
                     await context.bot.delete_message(chat_id=user_id, message_id=warn_msg.message_id)
-                    for msg_id in sent_messages:
-                        await context.bot.delete_message(chat_id=user_id, message_id=msg_id)
+                    await context.bot.delete_message(chat_id=user_id, message_id=video_msg.message_id)
                 except:
                     pass
             asyncio.create_task(delete_after())
@@ -268,7 +250,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             increment_requests()
             reset_attempts(user_id)
 
-            # Invite other channels
+            # Build channel invite buttons
             keyboard = []
             if OTHER_CHANNELS:
                 for idx, link in enumerate(OTHER_CHANNELS, 1):
@@ -291,107 +273,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     reply_markup=reply_markup,
                     parse_mode="Markdown"
                 )
-            return
-
-        # If not collection, try single file
-        file_info = get_file_info(payload)
-        if file_info:
-            # Single file logic (same as before)
-            if is_user_blocked(user_id):
-                await update.message.reply_text(
-                    "🔒 လူကြီးမင်းသည် ချန်နယ်များကို မဝင်ဘဲ လင့်ကို ၁၀ ကြိမ်အထက်နှိပ်ထားသည့်အတွက် ကျွန်ုပ်က block လုပ်ထားပါသည်။\n"
-                    "ကျေးဇူးပြု၍ လိုအပ်သော ချန်နယ်များအားလုံးကို ဝင်ပြီးနောက် ကျွန်ုပ်ထံ ဆက်သွယ်ပါ။"
-                )
-                return
-
-            all_joined, missing = await check_all_channels(user_id, context)
-            if not all_joined:
-                increment_attempts(user_id)
-                attempts = get_attempt_count(user_id)
-                remaining = 10 - attempts
-
-                msg = "🎬 **ဇာတ်ကားဖိုင်ကို ဒေါင်းလုဒ်လုပ်ရန် အောက်ပါ Channel များအားလုံးကို ဝင်ထားပေးပါနော်**\n\n"
-                for ch in REQUIRED_CHANNELS:
-                    msg += f"• **{ch['name']}**\n"
-                    msg += f"  👉 [ဝင်ရန် နှိပ်ပါ]({ch['invite']})\n\n"
-                msg += f"⚠️ သင်သည် ဤလင့်ကို **{attempts}/10** ကြိမ် နှိပ်ပြီးဖြစ်သည်။ {remaining} ကြိမ်သာ ကျန်ပါသေးသည်။\n"
-                msg += "Channel များအားလုံးဝင်ပြီးနောက် လင့်ကို ထပ်မံနှိပ်ပါ။"
-                await update.message.reply_text(msg, parse_mode="Markdown", disable_web_page_preview=True)
-                if attempts >= 10:
-                    block_user(user_id)
-                    block_msg = (
-                        "🚫 **လူကြီးမင်းသည် ချန်နယ်ကို မဝင်ဘဲ ဇာတ်ကားလင့်ကို ၁၀ ကြိမ်နှိပ်လိုက်သည့်အတွက် ဇာတ်ကားရယူနိုင်မည် မဟုတ်ပါ။**\n\n"
-                        "ဝမ်းနည်းပါတယ်ရှင့် လူကြီးမင်းကို ကျွန်ုပ်၏ဘက်မှ block လိုက်ပါသည်။\n"
-                        "သာယာပျော်ရွင်သောနေ့လေးဖြစ်ပါစေ 🙏🙏🙏"
-                    )
-                    await update.message.reply_text(block_msg)
-                return
-
-            if is_user_blocked(user_id):
-                unblock_user(user_id)
-                await update.message.reply_text("✅ သင်သည် လိုအပ်သောချန်နယ်များအားလုံးကို ဝင်ရောက်ထားပြီးဖြစ်သောကြောင့် သင့်အား unblock လုပ်လိုက်ပါသည်။")
-
-            file_id = file_info["file_id"]
-            file_name = file_info["file_name"]
-            try:
-                await update.message.reply_text(f"🎬 {file_name} ပို့ပေးနေပါပြီ...")
-                video_msg = await context.bot.send_video(
-                    chat_id=user_id,
-                    video=file_id,
-                    caption=f"🎬 သင့်ဇာတ်ကား - {file_name}"
-                )
-                warning_text = (
-                    "⚠️ ⚠️ ⚠️ အရေးကြီးပါတယ် ⚠️ ⚠️ ⚠️\n\n"
-                    "ဤရုပ်ရှင်ဖိုင်များ/ဗီဒီယိုများကို 5 မိနစ်အတွင်း (မူပိုင်ခွင့်ပြဿနာများကြောင့်) ဖျက်ပါမည်။\n\n"
-                    "ကျေးဇူးပြု၍ ဤဖိုင်များ/ဗီဒီယိုများအားလုံးကို သင်၏ Saved Messages များသို့ Forward လုပ်ပြီး ထိုနေရာတွင် ဇာတ်ကားအား ကြည့်ရှုပါ။\n\n"
-                    "ကျွန်ုပ်၏ Channel ကို လာရောက်အားပေးမှုအတွက် ကျေးဇူးအထူးတင်ပါတယ် 🙏🙏🙏\n\n"
-                    "Channel ရေရှည်တည်တံ့ဖို့အတွက် Support ပေးချင်ပါက Wave Pay (09767011991) ကို ကူညီနိုင်ပါတယ်။\n\n"
-                    "အားလုံးကို ကျေးဇူးတင်ပါတယ်။\n\n!!! IMPORTANT !!!\n"
-                    "This Movie Files/Videos will be deleted in 5 mins (Due to Copyright Issues).\n"
-                    "Please forward these ALL Files/Videos to your Saved Messages and start downloading there."
-                )
-                warn_msg = await context.bot.send_message(chat_id=user_id, text=warning_text)
-                async def delete_after():
-                    await asyncio.sleep(300)
-                    try:
-                        await context.bot.delete_message(chat_id=user_id, message_id=warn_msg.message_id)
-                        await context.bot.delete_message(chat_id=user_id, message_id=video_msg.message_id)
-                    except:
-                        pass
-                asyncio.create_task(delete_after())
-                add_user(user_id)
-                increment_requests()
-                reset_attempts(user_id)
-
-                keyboard = []
-                if OTHER_CHANNELS:
-                    for idx, link in enumerate(OTHER_CHANNELS, 1):
-                        if idx == 1:
-                            keyboard.append([InlineKeyboardButton("🎬 ဇာတ်ကားချန်နယ်", url=link)])
-                        elif idx == 2:
-                            keyboard.append([InlineKeyboardButton("👥 လူကြီးချန်နယ်", url=link)])
-                        elif idx == 3:
-                            keyboard.append([InlineKeyboardButton("🎵 မြန်မာသီချင်း ချန်နယ်", url=link)])
-                        else:
-                            keyboard.append([InlineKeyboardButton(f"Channel {idx}", url=link)])
-                if MUSIC_CHANNEL_LINK:
-                    keyboard.append([InlineKeyboardButton("🎵 သီချင်း/တရားတော် 🙏", url=MUSIC_CHANNEL_LINK)])
-                if keyboard:
-                    reply_markup = InlineKeyboardMarkup(keyboard)
-                    await context.bot.send_message(
-                        chat_id=user_id,
-                        text="🎉 **အခြားဇာတ်ကားများအတွက် အောက်ပါ Channel များသို့ ဝင်ရောက်ပါ**",
-                        reply_markup=reply_markup,
-                        parse_mode="Markdown"
-                    )
-            except Exception as e:
-                await context.bot.send_message(chat_id=user_id, text=f"❌ Video ပို့ရာတွင် အမှား: {str(e)}")
-            return
-
-        # Neither collection nor single file
-        await update.message.reply_text("❌ ဤလင့်သည် မမှန်ကန်ပါ သို့မဟုတ် သက်တမ်းကုန်သွားပါပြီ။")
+        except Exception as e:
+            await context.bot.send_message(chat_id=user_id, text=f"❌ Video ပို့ရာတွင် အမှား: {str(e)}")
     else:
-        # No payload - show menu for admin or welcome for user
         if is_admin(user_id):
             await show_menu(update, context)
         else:
@@ -403,7 +287,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="Markdown"
             )
 
-# ---------- Admin Menu (unchanged) ----------
+# ---------- Admin Menu ----------
 async def show_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [InlineKeyboardButton("🆕 New Post", callback_data="menu_newpost")],
@@ -458,9 +342,9 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         maintenance_mode = False
         await query.edit_message_text("🔊 Maintenance mode ပိတ်ထားပါသည်။")
     elif data == "menu_batchlink":
-        await query.edit_message_text("📦 `/batchlink` command ကို သုံးပါ။ (Video များစုပြီး `/done` ဖြင့် Deep Link တစ်ခုတည်းရယူရန်)")
+        await query.edit_message_text("📦 `/batchlink` command ကို သုံးပါ။ (Video များစုပြီး `/done` ဖြင့် Deep Link စာရင်းရယူရန်)")
 
-# ---------- /newpost Command (unchanged) ----------
+# ---------- /newpost Command ----------
 POSTER, CAPTION, VIDEO_FILE = range(3)
 
 async def newpost_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -551,6 +435,7 @@ async def receive_video_for_post(update: Update, context: ContextTypes.DEFAULT_T
             await update.message.reply_text("ပုံ မတွေ့ပါ။ /newpost ကို ထပ်မံစတင်ပါ။")
             return ConversationHandler.END
 
+        # Build photo caption WITHOUT telegraph link (only preview)
         if telegraph_url:
             preview = caption_full[:300] + "..." if len(caption_full) > 300 else caption_full
             photo_caption = f"📝 ဇာတ်ကားအကျဉ်းချုပ်\n\n{preview}"
@@ -581,7 +466,7 @@ async def cancel_newpost(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
     return ConversationHandler.END
 
-# ---------- /newfile Command (unchanged) ----------
+# ---------- /newfile Command ----------
 async def newfile_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("⛔ သင်သည် Admin မဟုတ်ပါ။")
@@ -611,7 +496,7 @@ async def handle_video_for_newfile(update: Update, context: ContextTypes.DEFAULT
         else:
             await update.message.reply_text("Video file တစ်ခု ပို့ပေးပါ။")
 
-# ---------- /link Command (unchanged) ----------
+# ---------- /link Command ----------
 async def link_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("⛔ သင်သည် Admin မဟုတ်ပါ။")
@@ -641,7 +526,7 @@ async def handle_video_for_link(update: Update, context: ContextTypes.DEFAULT_TY
         else:
             await update.message.reply_text("Video file တစ်ခု ပို့ပေးပါ။")
 
-# ---------- /batchlink Command (COLLECTION MODE) ----------
+# ---------- /batchlink Command (ConversationHandler) ----------
 BATCHLINK_VIDEO = range(1)
 
 async def batchlink_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -650,11 +535,10 @@ async def batchlink_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
     context.user_data['batch_videos'] = []
     await update.message.reply_text(
-        "📦 **Batch Collection Link Generator**\n\n"
-        "သင်ပို့လိုသော **Video ဖိုင်များအားလုံးကို တစ်ခုချင်းစီ ဆက်တိုက်ပို့ပါ။**\n"
+        "📦 **Batch Deep Link Generator**\n\n"
+        "Video ဖိုင်များကို တစ်ခုချင်းစီ ဆက်တိုက်ပို့ပါ။\n"
         "ပို့ပြီးပါက `/done` ဟုရိုက်ပါ။\n"
         "ဖျက်သိမ်းရန် `/cancel` ရိုက်ပါ။\n\n"
-        "**မှတ်ချက် -** သင်ပို့သမျှ ဖိုင်အားလုံးကို **တစ်စုတစ်ပေါင်းတည်းသော Deep Link တစ်ခု** ထုတ်ပေးပါမည်။\n\n"
         "စတင်ရန် Video ဖိုင်တစ်ခု ပို့ပါ။"
     )
     return BATCHLINK_VIDEO
@@ -662,18 +546,21 @@ async def batchlink_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def batchlink_receive_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         return ConversationHandler.END
+    # Make sure the list exists
+    if 'batch_videos' not in context.user_data:
+        context.user_data['batch_videos'] = []
     video = None
     if update.message.video:
         video = update.message.video
     elif update.message.document and update.message.document.mime_type and update.message.document.mime_type.startswith('video/'):
         video = update.message.document
     if not video:
-        await update.message.reply_text("ကျေးဇူးပြု၍ Video file တစ်ခု ပို့ပေးပါ။ (batch collection အတွက်)")
+        await update.message.reply_text("ကျေးဇူးပြု၍ Video file တစ်ခု ပို့ပေးပါ။ (batch အတွက်)")
         return BATCHLINK_VIDEO
     file_name = getattr(video, 'file_name', None)
     if not file_name:
         file_name = "ဇာတ်ကား"
-    batch_videos = context.user_data.get('batch_videos', [])
+    batch_videos = context.user_data['batch_videos']
     batch_videos.append({"file_id": video.file_id, "file_name": file_name})
     context.user_data['batch_videos'] = batch_videos
     count = len(batch_videos)
@@ -687,21 +574,13 @@ async def batchlink_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not batch_videos:
         await update.message.reply_text("❌ Video ဖိုင်များ မတွေ့ပါ။ /batchlink ဖြင့် ထပ်မံစတင်ပါ။")
         return ConversationHandler.END
-
-    # Create a single payload for the entire collection
-    payload = generate_payload()
-    save_collection(payload, batch_videos)
-    deep_link = create_deep_linked_url(BOT_USERNAME, payload)
-
-    file_names = "\n".join([f"• {v['file_name']}" for v in batch_videos])
-    response_text = (
-        f"📦 **Collection Deep Link အောင်မြင်စွာ ထုတ်လုပ်ပြီးပါပြီ။**\n\n"
-        f"**စုစုပေါင်းဖိုင် အရေအတွက်:** {len(batch_videos)}\n"
-        f"**ဖိုင်များ:**\n{file_names}\n\n"
-        f"**Collection Deep Link:**\n{deep_link}\n\n"
-        f"ဤလင့်တစ်ခုတည်းကို နှိပ်လိုက်ရုံဖြင့် အထက်ပါဖိုင်များအားလုံးကို တစ်ခါတည်း ရရှိမည်ဖြစ်သည်။\n"
-        f"(Channel 4 ခုလုံးဝင်ထားရန် လိုအပ်)"
-    )
+    results = []
+    for v in batch_videos:
+        payload = generate_payload()
+        save_file_info(payload, v["file_id"], v["file_name"])
+        deep_link = create_deep_linked_url(BOT_USERNAME, payload)
+        results.append(f"• **{v['file_name']}**\n  {deep_link}\n")
+    response_text = "📦 **Batch Deep Links**\n\n" + "\n".join(results) + "\nဤလင့်များကို ကူးယူ၍ မျှဝေနိုင်ပါသည်။ (Channel 4 ခုလုံးဝင်ထားရန် လိုအပ်)"
     if len(response_text) > 4000:
         response_text = response_text[:4000] + "\n...(စာရင်းတိုသွားပါသည်)"
     await update.message.reply_text(response_text, parse_mode="Markdown", disable_web_page_preview=True)
@@ -715,7 +594,7 @@ async def cancel_batchlink(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
     return ConversationHandler.END
 
-# ---------- /channelpost Command (unchanged) ----------
+# ---------- /channelpost Command ----------
 CHANNELPOST_PHOTO, CHANNELPOST_VIDEO = range(2)
 
 async def channelpost_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
