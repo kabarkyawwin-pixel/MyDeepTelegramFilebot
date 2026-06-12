@@ -109,10 +109,8 @@ TOKEN = os.environ.get("TELEGRAM_TOKEN")
 BOT_USERNAME = os.environ.get("BOT_USERNAME")
 ADMIN_IDS = [int(id.strip()) for id in os.environ.get("ADMIN_ID", "").split(",") if id.strip()] if os.environ.get("ADMIN_ID") else []
 
-# Channels to post when using /channelpost
 POST_CHANNELS = [ch.strip() for ch in os.environ.get("POST_CHANNELS", "").split(",") if ch.strip()] if os.environ.get("POST_CHANNELS") else []
 
-# Required Channels (4 channels)
 REQUIRED_CHANNELS = [
     {"id": "-1003753299714", "name": "🎬 Movies channel main (HD Movies များ)", "invite": "https://t.me/wznmoviescollector"},
     {"id": "-1003899625672", "name": "🎬 Movies channel 2 (အရံချန်နယ်)", "invite": "https://t.me/moviesandseriesforallwzn"},
@@ -168,7 +166,7 @@ async def create_telegraph_page(title: str, content_text: str) -> str:
         logger.error(f"Telegraph error: {e}")
         return None
 
-# ---------- Start & Deep Link Handler ----------
+# ---------- Start & Deep Link Handler (unchanged, keep as before) ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
 
@@ -250,7 +248,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             increment_requests()
             reset_attempts(user_id)
 
-            # Build channel invite buttons
             keyboard = []
             if OTHER_CHANNELS:
                 for idx, link in enumerate(OTHER_CHANNELS, 1):
@@ -344,7 +341,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "menu_batchlink":
         await query.edit_message_text("📦 `/batchlink` command ကို သုံးပါ။ (Video များစုပြီး `/done` ဖြင့် Deep Link စာရင်းရယူရန်)")
 
-# ---------- /newpost Command ----------
+# ---------- /newpost Command (unchanged) ----------
 POSTER, CAPTION, VIDEO_FILE = range(3)
 
 async def newpost_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -406,7 +403,6 @@ async def receive_video_for_post(update: Update, context: ContextTypes.DEFAULT_T
         save_file_info(payload, video.file_id, file_name)
         deep_link = create_deep_linked_url(BOT_USERNAME, payload)
 
-        # Buttons array
         buttons = []
         buttons.append([InlineKeyboardButton("🎬 ဇာတ်ကားရယူရန်", url=deep_link)])
         synopsis_url = context.user_data.get('telegraph_url')
@@ -435,7 +431,6 @@ async def receive_video_for_post(update: Update, context: ContextTypes.DEFAULT_T
             await update.message.reply_text("ပုံ မတွေ့ပါ။ /newpost ကို ထပ်မံစတင်ပါ။")
             return ConversationHandler.END
 
-        # Build photo caption WITHOUT telegraph link (only preview)
         if telegraph_url:
             preview = caption_full[:300] + "..." if len(caption_full) > 300 else caption_full
             photo_caption = f"📝 ဇာတ်ကားအကျဉ်းချုပ်\n\n{preview}"
@@ -526,7 +521,7 @@ async def handle_video_for_link(update: Update, context: ContextTypes.DEFAULT_TY
         else:
             await update.message.reply_text("Video file တစ်ခု ပို့ပေးပါ။")
 
-# ---------- /batchlink Command (ConversationHandler) ----------
+# ---------- /batchlink Command (Enhanced) ----------
 BATCHLINK_VIDEO = range(1)
 
 async def batchlink_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -536,7 +531,8 @@ async def batchlink_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['batch_videos'] = []
     await update.message.reply_text(
         "📦 **Batch Deep Link Generator**\n\n"
-        "Video ဖိုင်များကို တစ်ခုချင်းစီ ဆက်တိုက်ပို့ပါ။\n"
+        "Video ဖိုင်များကို **တစ်ခုချင်းစီ** ဆက်တိုက်ပို့ပါ။\n"
+        "(Forward လုပ်ထားသော Video များကိုလည်း ပို့နိုင်ပါသည်။)\n"
         "ပို့ပြီးပါက `/done` ဟုရိုက်ပါ။\n"
         "ဖျက်သိမ်းရန် `/cancel` ရိုက်ပါ။\n\n"
         "စတင်ရန် Video ဖိုင်တစ်ခု ပို့ပါ။"
@@ -546,25 +542,34 @@ async def batchlink_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def batchlink_receive_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         return ConversationHandler.END
-    # Make sure the list exists
-    if 'batch_videos' not in context.user_data:
-        context.user_data['batch_videos'] = []
+
+    # Try to extract video from different possible sources
     video = None
+    file_name = None
+
+    # Case 1: Direct video
     if update.message.video:
         video = update.message.video
+        file_name = video.file_name or "video.mp4"
+    # Case 2: Document that is a video
     elif update.message.document and update.message.document.mime_type and update.message.document.mime_type.startswith('video/'):
         video = update.message.document
+        file_name = video.file_name or "video.mp4"
+    # Case 3: Media group (album) - Telegram sends multiple messages; we handle each separately
+    # No special handling needed because each message in album will be received individually.
+
     if not video:
-        await update.message.reply_text("ကျေးဇူးပြု၍ Video file တစ်ခု ပို့ပေးပါ။ (batch အတွက်)")
+        await update.message.reply_text(
+            "❌ ကျေးဇူးပြု၍ **Video file** တစ်ခု ပို့ပေးပါ။\n"
+            "(Forward လုပ်ထားသော Video များကို တစ်ခုချင်းစီ ပို့ပါ။ ဓာတ်ပုံအုပ်စု (Media Group) အနေနဲ့ မပို့ပါနှင့်)"
+        )
         return BATCHLINK_VIDEO
-    file_name = getattr(video, 'file_name', None)
-    if not file_name:
-        file_name = "ဇာတ်ကား"
-    batch_videos = context.user_data['batch_videos']
+
+    batch_videos = context.user_data.get('batch_videos', [])
     batch_videos.append({"file_id": video.file_id, "file_name": file_name})
     context.user_data['batch_videos'] = batch_videos
     count = len(batch_videos)
-    await update.message.reply_text(f"✅ ဖိုင် #{count}: {file_name} ကို လက်ခံပြီးပါပြီ။\n\n(ဆက်လက်ပို့ရန် သို့မဟုတ် `/done` ရိုက်ပါ)")
+    await update.message.reply_text(f"✅ ဖိုင် #{count}: `{file_name}` ကို လက်ခံပြီးပါပြီ။\n\n(ဆက်လက်ပို့ရန် သို့မဟုတ် `/done` ရိုက်ပါ)", parse_mode="Markdown")
     return BATCHLINK_VIDEO
 
 async def batchlink_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -572,14 +577,16 @@ async def batchlink_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
     batch_videos = context.user_data.get('batch_videos', [])
     if not batch_videos:
-        await update.message.reply_text("❌ Video ဖိုင်များ မတွေ့ပါ။ /batchlink ဖြင့် ထပ်မံစတင်ပါ။")
+        await update.message.reply_text("❌ Video ဖိုင်များ မတွေ့ပါ။ /batchlink ဖြင့် ထပ်မံစတင်ပြီး Video များကို **တစ်ခုချင်းစီ** ပို့ပါ။")
         return ConversationHandler.END
+
     results = []
     for v in batch_videos:
         payload = generate_payload()
         save_file_info(payload, v["file_id"], v["file_name"])
         deep_link = create_deep_linked_url(BOT_USERNAME, payload)
         results.append(f"• **{v['file_name']}**\n  {deep_link}\n")
+
     response_text = "📦 **Batch Deep Links**\n\n" + "\n".join(results) + "\nဤလင့်များကို ကူးယူ၍ မျှဝေနိုင်ပါသည်။ (Channel 4 ခုလုံးဝင်ထားရန် လိုအပ်)"
     if len(response_text) > 4000:
         response_text = response_text[:4000] + "\n...(စာရင်းတိုသွားပါသည်)"
@@ -594,7 +601,7 @@ async def cancel_batchlink(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
     return ConversationHandler.END
 
-# ---------- /channelpost Command ----------
+# ---------- /channelpost Command (fixed) ----------
 CHANNELPOST_PHOTO, CHANNELPOST_VIDEO = range(2)
 
 async def channelpost_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -700,7 +707,7 @@ async def cancel_channelpost(update: Update, context: ContextTypes.DEFAULT_TYPE)
     context.user_data.clear()
     return ConversationHandler.END
 
-# ---------- Other Admin Commands ----------
+# ---------- Other Admin Commands (stats, broadcast, etc.) ----------
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         return
