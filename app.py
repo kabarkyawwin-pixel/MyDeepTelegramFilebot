@@ -109,10 +109,8 @@ TOKEN = os.environ.get("TELEGRAM_TOKEN")
 BOT_USERNAME = os.environ.get("BOT_USERNAME")
 ADMIN_IDS = [int(id.strip()) for id in os.environ.get("ADMIN_ID", "").split(",") if id.strip()] if os.environ.get("ADMIN_ID") else []
 
-# Channels to post when using /channelpost (required)
 POST_CHANNELS = [ch.strip() for ch in os.environ.get("POST_CHANNELS", "").split(",") if ch.strip()] if os.environ.get("POST_CHANNELS") else []
 
-# Required Channels for user download (4 channels)
 REQUIRED_CHANNELS = [
     {"id": "-1003753299714", "name": "🎬 Movies channel main (HD Movies များ)", "invite": "https://t.me/wznmoviescollector"},
     {"id": "-1003899625672", "name": "🎬 Movies channel 2 (အရံချန်နယ်)", "invite": "https://t.me/moviesandseriesforallwzn"},
@@ -120,11 +118,12 @@ REQUIRED_CHANNELS = [
     {"id": "-1003785717514", "name": "🎵 မြန်မာသီချင်းချန်နယ်", "invite": "https://t.me/wznmusiclibary"}
 ]
 
-# Additional channels for buttons in newpost (using env variable OTHER_CHANNELS)
-OTHER_CHANNELS = [link.strip() for link in os.environ.get("OTHER_CHANNELS", "").split(",") if link.strip() and link.strip().startswith("http")] if os.environ.get("OTHER_CHANNELS") else []
-MUSIC_CHANNEL_LINK = os.environ.get("MUSIC_CHANNEL_LINK", "")
-if MUSIC_CHANNEL_LINK and not MUSIC_CHANNEL_LINK.startswith("http"):
-    MUSIC_CHANNEL_LINK = ""
+# Optional additional channel buttons for newpost (not required for download)
+EXTRA_CHANNELS = [
+    {"url": "https://t.me/moviesandseriesforallwzn", "name": "🎬 MoviesChannel 2"},
+    {"url": "https://t.me/everyboyhobby", "name": "🔞 လူကြီးချန်နယ်"},
+    {"url": "https://t.me/wznmusiclibary", "name": "🎵 မြန်မာသီချင်းချန်နယ်"}
+]
 
 def is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS
@@ -251,20 +250,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             increment_requests()
             reset_attempts(user_id)
 
+            # Invite other channels (extra, not required)
             keyboard = []
-            if OTHER_CHANNELS:
-                for idx, link in enumerate(OTHER_CHANNELS, 1):
-                    if idx == 1:
-                        keyboard.append([InlineKeyboardButton("🎬 ဇာတ်ကားချန်နယ်", url=link)])
-                    elif idx == 2:
-                        keyboard.append([InlineKeyboardButton("👥 လူကြီးချန်နယ်", url=link)])
-                    elif idx == 3:
-                        keyboard.append([InlineKeyboardButton("🎵 မြန်မာသီချင်း ချန်နယ်", url=link)])
-                    else:
-                        keyboard.append([InlineKeyboardButton(f"Channel {idx}", url=link)])
-            if MUSIC_CHANNEL_LINK:
-                keyboard.append([InlineKeyboardButton("🎵 သီချင်း/တရားတော် 🙏", url=MUSIC_CHANNEL_LINK)])
-
+            if EXTRA_CHANNELS:
+                for ch in EXTRA_CHANNELS:
+                    keyboard.append([InlineKeyboardButton(ch["name"], url=ch["url"])])
             if keyboard:
                 reply_markup = InlineKeyboardMarkup(keyboard)
                 await context.bot.send_message(
@@ -344,7 +334,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "menu_batchlink":
         await query.edit_message_text("📦 `/batchlink` command ကို သုံးပါ။ (Video များစုပြီး `/done` ဖြင့် Deep Link စာရင်းရယူရန်)")
 
-# ---------- /newpost Command (Updated: Button for telegraph only, no link in caption) ----------
+# ---------- /newpost Command (Fixed: no telegraph link in caption, buttons as requested) ----------
 POSTER, CAPTION, VIDEO_FILE = range(3)
 
 async def newpost_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -359,7 +349,7 @@ async def receive_poster(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("ပုံတစ်ပုံ ပို့ပေးပါ။")
         return POSTER
     context.user_data['poster'] = update.message.photo[-1].file_id
-    await update.message.reply_text("✍️ ဇာတ်ကားအကြောင်း စာသား (ဇာတ်ညွှန်း) ရေးပေးပါ...\n(စာသားရှည်ပါက Telegraph တွင် အလိုအလျောက် တင်ပေးပါမည်)")
+    await update.message.reply_text("✍️ ဇာတ်ကားအကြောင်း စာသား (ဇာတ်ညွှန်း) ရေးပေးပါ...\n(စာသားရှည်ပါက Telegraph တွင် အလိုအလျောက် တင်ပေးပါမည်၊ သို့သော် Post caption တွင် လင့်မပါတော့ပါ)")
     return CAPTION
 
 async def receive_caption(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -406,28 +396,17 @@ async def receive_video_for_post(update: Update, context: ContextTypes.DEFAULT_T
         save_file_info(payload, video.file_id, file_name)
         deep_link = create_deep_linked_url(BOT_USERNAME, payload)
 
-        # Build buttons: first button always movie download
+        # Build buttons: movie button + synopsis button (if exists) + extra channels
         buttons = []
         buttons.append([InlineKeyboardButton("🎬 ဇာတ်ကားရယူရန်", url=deep_link)])
 
-        # Second button for telegraph synopsis if available
         synopsis_url = context.user_data.get('telegraph_url')
         if synopsis_url:
             buttons.append([InlineKeyboardButton("📖 ဇာတ်ညွှန်းအပြည့်အစုံ ဖတ်ရန်", url=synopsis_url)])
 
-        # Channel buttons from OTHER_CHANNELS (expected order: channel2, adult, music)
-        if OTHER_CHANNELS:
-            # Map index to desired names
-            channel_names = ["🎬 MoviesChannel 2", "🔞 လူကြီးချန်နယ်", "🎵 မြန်မာသီချင်းချန်နယ်"]
-            for idx, link in enumerate(OTHER_CHANNELS):
-                if idx < len(channel_names):
-                    buttons.append([InlineKeyboardButton(channel_names[idx], url=link)])
-                else:
-                    buttons.append([InlineKeyboardButton(f"Channel {idx+1}", url=link)])
-
-        # Additional music channel link if separate
-        if MUSIC_CHANNEL_LINK:
-            buttons.append([InlineKeyboardButton("🎵 သီချင်း/တရားတော် 🙏", url=MUSIC_CHANNEL_LINK)])
+        # Add extra channel buttons as specified
+        for ch in EXTRA_CHANNELS:
+            buttons.append([InlineKeyboardButton(ch["name"], url=ch["url"])])
 
         reply_markup = InlineKeyboardMarkup(buttons)
 
@@ -439,15 +418,9 @@ async def receive_video_for_post(update: Update, context: ContextTypes.DEFAULT_T
             await update.message.reply_text("ပုံ မတွေ့ပါ။ /newpost ကို ထပ်မံစတင်ပါ။")
             return ConversationHandler.END
 
-        # Build photo caption without telegraph link (only short preview if needed)
-        if telegraph_url:
-            # Show only short preview in caption, full synopsis via button
-            preview = caption_full[:300] + "..." if len(caption_full) > 300 else caption_full
-            photo_caption = f"📝 ဇာတ်ကားအကျဉ်းချုပ်\n\n{preview}"
-        else:
-            photo_caption = f"📝 ဇာတ်ကားအကြောင်း\n\n{caption_full}"
+        # Photo caption: only the user's caption (no telegraph link here)
+        photo_caption = caption_full if caption_full else "🎬 ဇာတ်ကားအကြောင်း"
 
-        # Send photo with buttons
         await update.message.reply_photo(
             photo=poster,
             caption=photo_caption,
@@ -472,7 +445,7 @@ async def cancel_newpost(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
     return ConversationHandler.END
 
-# ---------- /newfile & /link ----------
+# ---------- /newfile & /link (unchanged but keep for completeness) ----------
 async def newfile_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("⛔ သင်သည် Admin မဟုတ်ပါ။")
@@ -531,7 +504,7 @@ async def handle_video_for_link(update: Update, context: ContextTypes.DEFAULT_TY
         else:
             await update.message.reply_text("Video file တစ်ခု ပို့ပေးပါ။")
 
-# ---------- /batchlink Command with ConversationHandler ----------
+# ---------- /batchlink with ConversationHandler ----------
 BATCHLINK_VIDEO = range(1)
 
 async def batchlink_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -596,7 +569,7 @@ async def cancel_batchlink(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
     return ConversationHandler.END
 
-# ---------- /channelpost Command ----------
+# ---------- /channelpost Command (keep as is, works) ----------
 CHANNELPOST_PHOTO, CHANNELPOST_VIDEO = range(2)
 
 async def channelpost_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -848,6 +821,7 @@ application.add_handler(channelpost_handler)
 application.add_handler(CommandHandler("link", link_command))
 application.add_handler(MessageHandler(filters.VIDEO & filters.ChatType.PRIVATE, handle_video_for_link))
 application.add_handler(MessageHandler(filters.Document.ALL & filters.ChatType.PRIVATE, handle_video_for_link))
+application.add_handler(batchlink_handler)
 application.add_handler(CommandHandler("menu", menu_command))
 application.add_handler(CommandHandler("stats", stats))
 application.add_handler(CommandHandler("broadcast", broadcast))
@@ -860,7 +834,6 @@ application.add_handler(CommandHandler("listschedule", listschedule))
 application.add_handler(CommandHandler("cancelschedule", cancelschedule))
 application.add_handler(CommandHandler("delete", delete_file))
 application.add_handler(CommandHandler("deleteall", deleteall))
-application.add_handler(batchlink_handler)
 application.add_handler(CallbackQueryHandler(menu_callback, pattern="menu_"))
 
 # ---------- Polling ----------
