@@ -112,7 +112,7 @@ ADMIN_IDS = [int(id.strip()) for id in os.environ.get("ADMIN_ID", "").split(",")
 # Channels to post when using /channelpost
 POST_CHANNELS = [ch.strip() for ch in os.environ.get("POST_CHANNELS", "").split(",") if ch.strip()] if os.environ.get("POST_CHANNELS") else []
 
-# Required Channels (4 channels) - must be valid channel IDs (numeric starting with -100)
+# Required Channels for user download (4 channels)
 REQUIRED_CHANNELS = [
     {"id": "-1003753299714", "name": "🎬 Movies channel main (HD Movies များ)", "invite": "https://t.me/wznmoviescollector"},
     {"id": "-1003899625672", "name": "🎬 Movies channel 2 (အရံချန်နယ်)", "invite": "https://t.me/moviesandseriesforallwzn"},
@@ -120,11 +120,10 @@ REQUIRED_CHANNELS = [
     {"id": "-1003785717514", "name": "🎵 မြန်မာသီချင်းချန်နယ်", "invite": "https://t.me/wznmusiclibary"}
 ]
 
-# Additional channel links (must be http/https URLs, not channel IDs)
 OTHER_CHANNELS = [link.strip() for link in os.environ.get("OTHER_CHANNELS", "").split(",") if link.strip() and link.strip().startswith("http")] if os.environ.get("OTHER_CHANNELS") else []
 MUSIC_CHANNEL_LINK = os.environ.get("MUSIC_CHANNEL_LINK", "")
 if MUSIC_CHANNEL_LINK and not MUSIC_CHANNEL_LINK.startswith("http"):
-    MUSIC_CHANNEL_LINK = ""  # ignore if not valid URL
+    MUSIC_CHANNEL_LINK = ""
 
 def is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS
@@ -251,7 +250,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             increment_requests()
             reset_attempts(user_id)
 
-            # Invite other channels (only valid URLs)
             keyboard = []
             if OTHER_CHANNELS:
                 for idx, link in enumerate(OTHER_CHANNELS, 1):
@@ -298,7 +296,8 @@ async def show_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("📢 Broadcast", callback_data="menu_broadcast")],
         [InlineKeyboardButton("🚫 Blocklist", callback_data="menu_blocklist")],
         [InlineKeyboardButton("🔇 Mute", callback_data="menu_mute")],
-        [InlineKeyboardButton("🔊 Unmute", callback_data="menu_unmute")]
+        [InlineKeyboardButton("🔊 Unmute", callback_data="menu_unmute")],
+        [InlineKeyboardButton("📦 Batch Link", callback_data="menu_batchlink")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text("🤖 **Admin Menu**\n\nအောက်ပါခလုတ်များကို နှိပ်ပါ။", reply_markup=reply_markup, parse_mode="Markdown")
@@ -341,6 +340,8 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "menu_unmute":
         maintenance_mode = False
         await query.edit_message_text("🔊 Maintenance mode ပိတ်ထားပါသည်။")
+    elif data == "menu_batchlink":
+        await query.edit_message_text("📦 `/batchlink` command ကို သုံးပါ။ (Video အများကြီးပို့ပြီး Deep Link စာရင်းရယူရန်)")
 
 # ---------- /newpost Command ----------
 POSTER, CAPTION, VIDEO_FILE = range(3)
@@ -522,7 +523,70 @@ async def handle_video_for_link(update: Update, context: ContextTypes.DEFAULT_TY
         else:
             await update.message.reply_text("Video file တစ်ခု ပို့ပေးပါ။")
 
-# ---------- /channelpost Command (FIXED) ----------
+# ---------- /batchlink Command (No limit on number of videos) ----------
+async def batchlink_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("⛔ သင်သည် Admin မဟုတ်ပါ။")
+        return
+    context.user_data['batch_videos'] = []
+    await update.message.reply_text("📦 **Batch Link Mode**\n\nVideo ဖိုင်များကို တစ်ခုချင်းစီ ဆက်တိုက် ပို့ပေးပါ။ ပို့ပြီးပါက `/done` ကိုနှိပ်ပါ။ (အကန့်အသတ်မရှိ)")
+    return
+
+async def batchlink_receive_videos(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        return
+    if 'batch_videos' not in context.user_data:
+        return
+    video = None
+    if update.message.video:
+        video = update.message.video
+    elif update.message.document and update.message.document.mime_type and update.message.document.mime_type.startswith('video/'):
+        video = update.message.document
+    if not video:
+        await update.message.reply_text("ကျေးဇူးပြု၍ Video file တစ်ခု ပို့ပေးပါ။ (စာရင်းသွင်းရန်)")
+        return
+    file_name = getattr(video, 'file_name', None)
+    if not file_name:
+        file_name = "ဇာတ်ကား"
+    context.user_data['batch_videos'].append({"file_id": video.file_id, "file_name": file_name})
+    await update.message.reply_text(f"✅ လက်ခံပြီးပါပြီ: {file_name} (ဆက်လက်ပို့နိုင်ပါသည်၊ ပြီးပါက `/done` ရိုက်ပါ)")
+
+async def batchlink_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        return
+    if 'batch_videos' not in context.user_data:
+        await update.message.reply_text("လက်ရှိ Batch မရှိပါ။ /batchlink ဖြင့် စတင်ပါ။")
+        return
+    videos = context.user_data.get('batch_videos', [])
+    if not videos:
+        await update.message.reply_text("❌ Video ဖိုင်များ မတွေ့ပါ။ /batchlink ဖြင့် ထပ်မံစတင်ပါ။")
+        context.user_data.pop('batch_videos', None)
+        return
+    results = []
+    for v in videos:
+        payload = generate_payload()
+        save_file_info(payload, v["file_id"], v["file_name"])
+        deep_link = create_deep_linked_url(BOT_USERNAME, payload)
+        results.append(f"• **{v['file_name']}**\n  {deep_link}\n")
+    response_text = "📦 **Batch Deep Links**\n\n" + "\n".join(results) + "\nဤလင့်များကို ကူးယူ၍ မျှဝေနိုင်ပါသည်။ (Channel 4 ခုလုံးဝင်ထားရန် လိုအပ်)"
+    if len(response_text) > 4096:
+        # Split into multiple messages
+        parts = []
+        current = "📦 **Batch Deep Links**\n\n"
+        for r in results:
+            if len(current) + len(r) > 4000:
+                parts.append(current)
+                current = "📦 **Batch Deep Links (ဆက်)**\n\n"
+            current += r
+        if current:
+            parts.append(current)
+        for part in parts:
+            await update.message.reply_text(part, parse_mode="Markdown", disable_web_page_preview=True)
+    else:
+        await update.message.reply_text(response_text, parse_mode="Markdown", disable_web_page_preview=True)
+    context.user_data.pop('batch_videos', None)
+
+# ---------- /channelpost Command (FIXED - reliable) ----------
 CHANNELPOST_PHOTO, CHANNELPOST_VIDEO = range(2)
 
 async def channelpost_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -541,11 +605,9 @@ async def channelpost_receive_photo(update: Update, context: ContextTypes.DEFAUL
         return CHANNELPOST_PHOTO
     photo_file_id = update.message.photo[-1].file_id
     caption_text = update.message.caption or ""
-
     context.user_data['channelpost_photo'] = photo_file_id
     context.user_data['channelpost_raw_caption'] = caption_text
     context.user_data['channelpost_telegraph_url'] = None
-
     if len(caption_text) > 1024:
         await update.message.reply_text("⏳ စာသားရှည်နေပါသည်။ Telegraph စာမျက်နှာ ဖန်တီးနေပါပြီ...")
         try:
@@ -563,39 +625,29 @@ async def channelpost_receive_photo(update: Update, context: ContextTypes.DEFAUL
     return CHANNELPOST_VIDEO
 
 async def channelpost_receive_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Detect video from either video or document
     video = None
     if update.message.video:
         video = update.message.video
     elif update.message.document and update.message.document.mime_type and update.message.document.mime_type.startswith('video/'):
         video = update.message.document
-
     if not video:
         await update.message.reply_text("❌ Video file တစ်ခု ပို့ပေးပါ (video file သို့မဟုတ် video document)")
-        return CHANNELPOST_VIDEO  # stay in same state
-
+        return CHANNELPOST_VIDEO
     try:
         file_name = getattr(video, 'file_name', None)
         if not file_name:
             file_name = "ဇာတ်ကား"
-
-        # Generate Deep Link
         payload = generate_payload()
         save_file_info(payload, video.file_id, file_name)
         deep_link = create_deep_linked_url(BOT_USERNAME, payload)
-
         button = InlineKeyboardButton("🎬 ဇာတ်ကားရယူရန်", url=deep_link)
         reply_markup = InlineKeyboardMarkup([[button]])
-
         photo_id = context.user_data.get('channelpost_photo')
         raw_caption = context.user_data.get('channelpost_raw_caption', '')
         telegraph_url = context.user_data.get('channelpost_telegraph_url')
-
         if not photo_id:
             await update.message.reply_text("ပုံ မတွေ့ပါ။ /channelpost ကို ထပ်စမ်းပါ။")
             return ConversationHandler.END
-
-        # Build final caption
         if telegraph_url:
             preview = raw_caption[:300] + "..." if len(raw_caption) > 300 else raw_caption
             final_caption = f"{preview}\n\n📖 [ဇာတ်ညွှန်းအပြည့်အစုံဖတ်ရန်]({telegraph_url})"
@@ -603,7 +655,6 @@ async def channelpost_receive_video(update: Update, context: ContextTypes.DEFAUL
         else:
             final_caption = raw_caption
             parse_mode = None
-
         success_count = 0
         for channel in POST_CHANNELS:
             try:
@@ -619,7 +670,6 @@ async def channelpost_receive_video(update: Update, context: ContextTypes.DEFAUL
                 await asyncio.sleep(1)
             except Exception as e:
                 logger.error(f"Failed to post to channel {channel}: {e}")
-
         await update.message.reply_text(
             f"✅ **Post တင်ခြင်း ပြီးဆုံးပါပြီ။**\n\n"
             f"**အောင်မြင်သော Channel:** {success_count}/{len(POST_CHANNELS)}\n"
@@ -782,6 +832,10 @@ application.add_handler(CommandHandler("listschedule", listschedule))
 application.add_handler(CommandHandler("cancelschedule", cancelschedule))
 application.add_handler(CommandHandler("delete", delete_file))
 application.add_handler(CommandHandler("deleteall", deleteall))
+application.add_handler(CommandHandler("batchlink", batchlink_start))
+application.add_handler(MessageHandler(filters.VIDEO & filters.ChatType.PRIVATE & ~filters.COMMAND, batchlink_receive_videos))
+application.add_handler(MessageHandler(filters.Document.ALL & filters.ChatType.PRIVATE & ~filters.COMMAND, batchlink_receive_videos))
+application.add_handler(CommandHandler("done", batchlink_done))
 application.add_handler(CallbackQueryHandler(menu_callback, pattern="menu_"))
 
 # ---------- Polling ----------
