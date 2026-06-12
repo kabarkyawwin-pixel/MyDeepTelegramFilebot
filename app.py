@@ -166,7 +166,7 @@ async def create_telegraph_page(title: str, content_text: str) -> str:
         logger.error(f"Telegraph error: {e}")
         return None
 
-# ---------- Start & Deep Link Handler ----------
+# ---------- Start & Deep Link Handler (unchanged) ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
 
@@ -341,7 +341,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "menu_batchlink":
         await query.edit_message_text("📦 `/batchlink` command ကို သုံးပါ။ (Video များစုပြီး `/done` ဖြင့် Deep Link စာရင်းရယူရန်)")
 
-# ---------- /newpost Command ----------
+# ---------- /newpost Command (unchanged) ----------
 POSTER, CAPTION, VIDEO_FILE = range(3)
 
 async def newpost_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -521,14 +521,19 @@ async def handle_video_for_link(update: Update, context: ContextTypes.DEFAULT_TY
         else:
             await update.message.reply_text("Video file တစ်ခု ပို့ပေးပါ။")
 
-# ---------- /batchlink Command (Enhanced for Media Group & Forward) ----------
+# ---------- /batchlink Command (Enhanced with Media Group support) ----------
 BATCHLINK_VIDEO = range(1)
+
+# To track pending media groups
+pending_media_groups = {}
 
 async def batchlink_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("⛔ သင်သည် Admin မဟုတ်ပါ။")
         return ConversationHandler.END
     context.user_data['batch_videos'] = []
+    # Clear any pending media group for this user
+    pending_media_groups[update.effective_user.id] = []
     await update.message.reply_text(
         "📦 **Batch Deep Link Generator**\n\n"
         "Video ဖိုင်များကို **တစ်ခုချင်းစီ** ဆက်တိုက်ပို့ပါ။\n"
@@ -544,27 +549,35 @@ async def batchlink_receive_video(update: Update, context: ContextTypes.DEFAULT_
     if not is_admin(update.effective_user.id):
         return ConversationHandler.END
 
+    user_id = update.effective_user.id
     video = None
     file_name = None
 
-    # Case 1: Direct video
+    # First, try to extract video from the message
     if update.message.video:
         video = update.message.video
         file_name = video.file_name or "video.mp4"
-    # Case 2: Document that is a video (including forwarded documents)
     elif update.message.document and update.message.document.mime_type and update.message.document.mime_type.startswith('video/'):
         video = update.message.document
         file_name = video.file_name or "video.mp4"
-    # Case 3: If the message has no video, but might be a forwarded message that contains video?
-    # The above two cases already cover most forwarded videos because forwarded video still appears as video or document.
+    else:
+        # If not a video, check if it's part of a media group (album)
+        media_group_id = update.message.media_group_id
+        if media_group_id:
+            # Store in pending media group
+            if user_id not in pending_media_groups:
+                pending_media_groups[user_id] = []
+            pending_media_groups[user_id].append(update.message)
+            # Don't process immediately; wait for the whole group
+            return BATCHLINK_VIDEO
+        else:
+            await update.message.reply_text(
+                "❌ ကျေးဇူးပြု၍ **Video file** တစ်ခု ပို့ပေးပါ။\n"
+                "(Forward လုပ်ထားသော Video များကို တစ်ခုချင်းစီ ပို့ပါ။ ဓာတ်ပုံအုပ်စု (Media Group) အနေနဲ့ မပို့ပါနှင့်)"
+            )
+            return BATCHLINK_VIDEO
 
-    if not video:
-        await update.message.reply_text(
-            "❌ ကျေးဇူးပြု၍ **Video file** တစ်ခု ပို့ပေးပါ။\n"
-            "(Media Group (ဓာတ်ပုံအုပ်စု) အနေနဲ့ မပို့ပါနှင့်။ တစ်ခုချင်းစီ ခွဲ၍ ပို့ပါ။)"
-        )
-        return BATCHLINK_VIDEO
-
+    # Process single video
     batch_videos = context.user_data.get('batch_videos', [])
     batch_videos.append({"file_id": video.file_id, "file_name": file_name})
     context.user_data['batch_videos'] = batch_videos
@@ -575,6 +588,25 @@ async def batchlink_receive_video(update: Update, context: ContextTypes.DEFAULT_
 async def batchlink_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         return ConversationHandler.END
+
+    user_id = update.effective_user.id
+    # Process any pending media group messages first
+    if user_id in pending_media_groups and pending_media_groups[user_id]:
+        group_msgs = pending_media_groups[user_id]
+        batch_videos = context.user_data.get('batch_videos', [])
+        for msg in group_msgs:
+            # Try to extract video from each message in the group
+            if msg.video:
+                video = msg.video
+                file_name = video.file_name or "video.mp4"
+                batch_videos.append({"file_id": video.file_id, "file_name": file_name})
+            elif msg.document and msg.document.mime_type and msg.document.mime_type.startswith('video/'):
+                video = msg.document
+                file_name = video.file_name or "video.mp4"
+                batch_videos.append({"file_id": video.file_id, "file_name": file_name})
+        context.user_data['batch_videos'] = batch_videos
+        pending_media_groups[user_id] = []  # clear
+
     batch_videos = context.user_data.get('batch_videos', [])
     if not batch_videos:
         await update.message.reply_text("❌ Video ဖိုင်များ မတွေ့ပါ။ /batchlink ဖြင့် ထပ်မံစတင်ပြီး Video များကို **တစ်ခုချင်းစီ** ပို့ပါ။")
@@ -592,16 +624,21 @@ async def batchlink_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
         response_text = response_text[:4000] + "\n...(စာရင်းတိုသွားပါသည်)"
     await update.message.reply_text(response_text, parse_mode="Markdown", disable_web_page_preview=True)
     context.user_data.clear()
+    if user_id in pending_media_groups:
+        del pending_media_groups[user_id]
     return ConversationHandler.END
 
 async def cancel_batchlink(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         return ConversationHandler.END
+    user_id = update.effective_user.id
+    if user_id in pending_media_groups:
+        del pending_media_groups[user_id]
     await update.message.reply_text("လုပ်ဆောင်ချက် ပယ်ဖျက်ပြီးပါပြီ။")
     context.user_data.clear()
     return ConversationHandler.END
 
-# ---------- /channelpost Command ----------
+# ---------- /channelpost Command (unchanged, keep as before) ----------
 CHANNELPOST_PHOTO, CHANNELPOST_VIDEO = range(2)
 
 async def channelpost_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -707,7 +744,7 @@ async def cancel_channelpost(update: Update, context: ContextTypes.DEFAULT_TYPE)
     context.user_data.clear()
     return ConversationHandler.END
 
-# ---------- Other Admin Commands ----------
+# ---------- Other Admin Commands (stats, broadcast, etc.) ----------
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         return
