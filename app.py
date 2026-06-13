@@ -683,13 +683,11 @@ async def cancel_channelpost(update: Update, context: ContextTypes.DEFAULT_TYPE)
     context.user_data.clear()
     return ConversationHandler.END
 
-# ---------- /test_channel Command (Check if bot can post to channel) ----------
+# ---------- /test_channel Command ----------
 async def test_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("⛔ သင်သည် Admin မဟုတ်ပါ။")
         return
-    
-    # Ask user to provide a channel ID
     await update.message.reply_text("ကျေးဇူးပြု၍ စမ်းသပ်လိုသော Channel ID (နံပါတ်) ကို ပို့ပေးပါ။ (ဥပမာ: -1001234567890)")
     context.user_data['test_channel_mode'] = True
 
@@ -706,7 +704,7 @@ async def test_channel_receive_id(update: Update, context: ContextTypes.DEFAULT_
         finally:
             context.user_data.pop('test_channel_mode', None)
 
-# ---------- /convert_old Command (ပြင်ဆင်ပြီး - အသေးစိတ် error ပြမယ်) ----------
+# ---------- /convert_old Command (ပြင်ဆင်ပြီး) ----------
 async def convert_old(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("⛔ သင်သည် Admin မဟုတ်ပါ။")
@@ -752,6 +750,7 @@ async def convert_old(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 error_details.append(f"Post {idx}: Missing file_id or channel")
                 continue
 
+            # Convert channel ID to integer if it's a string
             if isinstance(target_channel_raw, str):
                 target_channel = int(target_channel_raw)
             else:
@@ -790,11 +789,9 @@ async def convert_old(update: Update, context: ContextTypes.DEFAULT_TYPE):
             err_msg = f"Post {idx}: {str(e)[:100]}"
             error_details.append(err_msg)
             logger.error(f"Error with post {post.get('message_id', idx)}: {e}")
-            # ပထမ 10 ခုအထိ error ကို admin ထံ ပြမယ်
             if len(error_details) <= 10:
                 await update.message.reply_text(f"❌ {err_msg}")
 
-    # နောက်ဆုံးအခြေအနေ
     summary = f"✅ **ပြောင်းလဲခြင်း ပြီးဆုံးပါပြီ။**\n\n📊 အောင်မြင်သည်: {success}\n❌ မအောင်မြင်ပါ: {fail}"
     if error_details:
         summary += f"\n\n⚠️ ပထမ {min(10, len(error_details))} error များ:\n" + "\n".join(error_details[:10])
