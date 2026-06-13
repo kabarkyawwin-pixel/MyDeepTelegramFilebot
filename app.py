@@ -336,7 +336,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "menu_batchlink":
         await query.edit_message_text("📦 `/batchlink` command ကို သုံးပါ။ (Video များစုပြီး `/done` ဖြင့် Deep Link စာရင်းရယူရန်)")
     elif data == "menu_convert_old":
-        await query.edit_message_text("🔄 `/convert_old` command ကို သုံးပါ။ (အဟောင်း Post များကို Deep Link ပြောင်းရန်)")
+        await query.edit_message_text("🔄 `/convert_old <limit>` ကို သုံးပါ။ (ဥပမာ `/convert_old 500` ဟုရိုက်ပါ)")
 
 # ---------- /newpost Command ----------
 POSTER, CAPTION, VIDEO_FILE = range(3)
@@ -535,7 +535,7 @@ async def batchlink_receive_video(update: Update, context: ContextTypes.DEFAULT_
     video = None
     if update.message.video:
         video = update.message.video
-    elif update.message.document and update.message.document.mime_type and update.message.document.mime_type.startswith('video/'):
+    elif update.message.document and update.message.document.mime_type.startswith('video/'):
         video = update.message.document
     if not video:
         await update.message.reply_text("❌ ကျေးဇူးပြု၍ Video file တစ်ခု ပို့ပေးပါ။ (batch အတွက်)")
@@ -620,7 +620,7 @@ async def channelpost_receive_video(update: Update, context: ContextTypes.DEFAUL
     video = None
     if update.message.video:
         video = update.message.video
-    elif update.message.document and update.message.document.mime_type and update.message.document.mime_type.startswith('video/'):
+    elif update.message.document and update.message.document.mime_type.startswith('video/'):
         video = update.message.document
     if not video:
         await update.message.reply_text("❌ Video file တစ်ခု ပို့ပေးပါ (video file သို့မဟုတ် video document)")
@@ -683,11 +683,20 @@ async def cancel_channelpost(update: Update, context: ContextTypes.DEFAULT_TYPE)
     context.user_data.clear()
     return ConversationHandler.END
 
-# ---------- /convert_old Command (FIXED - channel id conversion) ----------
+# ---------- /convert_old Command (ပြင်ဆင်ပြီး) ----------
 async def convert_old(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("⛔ သင်သည် Admin မဟုတ်ပါ။")
         return
+
+    # Optional limit parameter: /convert_old 500
+    limit = None
+    if context.args and len(context.args) > 0:
+        try:
+            limit = int(context.args[0])
+        except:
+            await update.message.reply_text("❌ ကျေးဇူးပြု၍ ဂဏန်းတစ်ခုသာ ထည့်ပါ။ ဥပမာ: /convert_old 500")
+            return
 
     await update.message.reply_text("⏳ စတင်နေပါပြီ... JSON ဖိုင်ဖတ်နေသည်...")
 
@@ -696,11 +705,14 @@ async def convert_old(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     with open('old_posts.json', 'r', encoding='utf-8') as f:
-        posts = json.load(f)
+        all_posts = json.load(f)
 
-    if not posts:
+    if not all_posts:
         await update.message.reply_text("❌ JSON ဖိုင်တွင် Post မရှိပါ။")
         return
+
+    # Apply limit if specified
+    posts = all_posts[:limit] if limit else all_posts
 
     await update.message.reply_text(f"📊 {len(posts)} ခုကို စတင်ပြောင်းလဲနေပါပြီ... (ဤအချိန်အနည်းငယ်ကြာနိုင်ပါသည်)")
 
@@ -717,31 +729,33 @@ async def convert_old(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 fail += 1
                 continue
 
-            # Convert channel to integer if it's a string (e.g., "-1003753299714")
+            # Convert channel ID to integer if it's a string (e.g., "-1003753299714")
             if isinstance(target_channel_raw, str):
                 target_channel = int(target_channel_raw)
             else:
                 target_channel = target_channel_raw
 
+            # Generate Deep Link
             payload = generate_payload()
-            file_name = f"movie_{post['message_id']}"
+            file_name = f"movie_{post.get('message_id', idx)}"
             save_file_info(payload, file_id, file_name)
             deep_link = create_deep_linked_url(BOT_USERNAME, payload)
 
             button = InlineKeyboardButton("🎬 ဇာတ်ကားရယူရန်", url=deep_link)
             reply_markup = InlineKeyboardMarkup([[button]])
 
+            # Send to channel
             if photo_id:
                 await context.bot.send_photo(
                     chat_id=target_channel,
                     photo=photo_id,
-                    caption=caption[:1024] if caption else f"Movie #{post['message_id']}",
+                    caption=caption[:1024] if caption else f"Movie #{post.get('message_id', idx)}",
                     reply_markup=reply_markup
                 )
             else:
                 await context.bot.send_message(
                     chat_id=target_channel,
-                    text=f"{caption}\n\n👇 ဇာတ်ကားရယူရန် အောက်ပါခလုတ်ကို နှိပ်ပါ။" if caption else f"Movie #{post['message_id']}\n\n👇 ဇာတ်ကားရယူရန် အောက်ပါခလုတ်ကို နှိပ်ပါ။",
+                    text=f"{caption}\n\n👇 ဇာတ်ကားရယူရန် အောက်ပါခလုတ်ကို နှိပ်ပါ။" if caption else f"Movie #{post.get('message_id', idx)}\n\n👇 ဇာတ်ကားရယူရန် အောက်ပါခလုတ်ကို နှိပ်ပါ။",
                     reply_markup=reply_markup
                 )
 
@@ -749,10 +763,10 @@ async def convert_old(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if idx % 50 == 0:
                 await update.message.reply_text(f"✅ {idx}/{len(posts)} ပြီးဆုံးသည်...")
 
-            await asyncio.sleep(0.3)
+            await asyncio.sleep(0.3)  # Slightly faster (0.3 seconds)
 
         except Exception as e:
-            logger.error(f"Error with post {post.get('message_id')}: {e}")
+            logger.error(f"Error with post {post.get('message_id', idx)}: {e}")
             fail += 1
 
     await update.message.reply_text(
