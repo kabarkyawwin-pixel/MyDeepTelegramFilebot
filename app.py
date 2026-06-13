@@ -750,7 +750,7 @@ async def convert_old(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 error_details.append(f"Post {idx}: Missing file_id or channel")
                 continue
 
-            # Convert channel ID to integer if it's a string
+            # 🔧 FIX: အဓိက ပြင်ဆင်ချက် - string ဖြစ်နေရင် int ပြောင်းပါ
             if isinstance(target_channel_raw, str):
                 target_channel = int(target_channel_raw)
             else:
