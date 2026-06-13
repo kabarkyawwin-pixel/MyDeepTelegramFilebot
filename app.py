@@ -4,6 +4,7 @@ import threading
 import logging
 import sys
 import secrets
+import json
 from datetime import datetime
 from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -119,6 +120,11 @@ REQUIRED_CHANNELS = [
     {"id": "-1003792838735", "name": "🔞 လူကြီးများအတွက် သီးသန့်ချန်နယ် (ကလေးများမဝင်ရ)", "invite": "https://t.me/everyboyhobby"},
     {"id": "-1003785717514", "name": "🎵 မြန်မာသီချင်းချန်နယ်", "invite": "https://t.me/wznmusiclibary"}
 ]
+
+OTHER_CHANNELS = [link.strip() for link in os.environ.get("OTHER_CHANNELS", "").split(",") if link.strip() and link.strip().startswith("http")] if os.environ.get("OTHER_CHANNELS") else []
+MUSIC_CHANNEL_LINK = os.environ.get("MUSIC_CHANNEL_LINK", "")
+if MUSIC_CHANNEL_LINK and not MUSIC_CHANNEL_LINK.startswith("http"):
+    MUSIC_CHANNEL_LINK = ""
 
 def is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS
@@ -284,7 +290,7 @@ async def show_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🔇 Mute", callback_data="menu_mute")],
         [InlineKeyboardButton("🔊 Unmute", callback_data="menu_unmute")],
         [InlineKeyboardButton("📦 Batch Link", callback_data="menu_batchlink")],
-        [InlineKeyboardButton("🎬 Series Post", callback_data="menu_multilink")]
+        [InlineKeyboardButton("🔄 Convert Old Posts", callback_data="menu_convert_old")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text("🤖 **Admin Menu**\n\nအောက်ပါခလုတ်များကို နှိပ်ပါ။", reply_markup=reply_markup, parse_mode="Markdown")
@@ -329,10 +335,10 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("🔊 Maintenance mode ပိတ်ထားပါသည်။")
     elif data == "menu_batchlink":
         await query.edit_message_text("📦 `/batchlink` command ကို သုံးပါ။ (Video များစုပြီး `/done` ဖြင့် Deep Link စာရင်းရယူရန်)")
-    elif data == "menu_multilink":
-        await query.edit_message_text("🎬 `/multilink` command ကို သုံးပါ။ (Series/Episode များအတွက် Buttons အစုံဖန်တီးရန်)")
+    elif data == "menu_convert_old":
+        await query.edit_message_text("🔄 `/convert_old` command ကို သုံးပါ။ (အဟောင်း Post များကို Deep Link ပြောင်းရန်)")
 
-# ---------- /newpost Command (unchanged) ----------
+# ---------- /newpost Command ----------
 POSTER, CAPTION, VIDEO_FILE = range(3)
 
 async def newpost_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -378,7 +384,7 @@ async def receive_video_for_post(update: Update, context: ContextTypes.DEFAULT_T
     video = None
     if update.message.video:
         video = update.message.video
-    elif update.message.document and update.message.document.mime_type and update.message.document.mime_type.startswith('video/'):
+    elif update.message.document and update.message.document.mime_type.startswith('video/'):
         video = update.message.document
 
     if not video:
@@ -394,15 +400,23 @@ async def receive_video_for_post(update: Update, context: ContextTypes.DEFAULT_T
         save_file_info(payload, video.file_id, file_name)
         deep_link = create_deep_linked_url(BOT_USERNAME, payload)
 
-        # Buttons array
         buttons = []
         buttons.append([InlineKeyboardButton("🎬 ဇာတ်ကားရယူရန်", url=deep_link)])
         synopsis_url = context.user_data.get('telegraph_url')
         if synopsis_url:
-            buttons.append([InlineKeyboardButton("📖 ဇာတ်ညွှန်းအပြည့်အစုံ ဖတ်ရန်", url=synopsis_url)])
-        buttons.append([InlineKeyboardButton("🎬 ဇာတ်ကားချန်နယ်", url="https://t.me/moviesandseriesforallwzn")])
-        buttons.append([InlineKeyboardButton("👥 လူကြီးချန်နယ်", url="https://t.me/everyboyhobby")])
-        buttons.append([InlineKeyboardButton("🎵 မြန်မာသီချင်းချန်နယ်", url="https://t.me/wznmusiclibary")])
+            buttons.append([InlineKeyboardButton("📖 ဇာတ်ညွှန်းအပြည့်အစုံဖတ်ရန်", url=synopsis_url)])
+        if OTHER_CHANNELS:
+            for idx, link in enumerate(OTHER_CHANNELS, 1):
+                if idx == 1:
+                    buttons.append([InlineKeyboardButton("🎬 ဇာတ်ကားချန်နယ်", url=link)])
+                elif idx == 2:
+                    buttons.append([InlineKeyboardButton("👥 လူကြီးချန်နယ်", url=link)])
+                elif idx == 3:
+                    buttons.append([InlineKeyboardButton("🎵 မြန်မာသီချင်းချန်နယ်", url=link)])
+                else:
+                    buttons.append([InlineKeyboardButton(f"Channel {idx}", url=link)])
+        if MUSIC_CHANNEL_LINK:
+            buttons.append([InlineKeyboardButton("🎵 သီချင်း/တရားတော် 🙏", url=MUSIC_CHANNEL_LINK)])
 
         reply_markup = InlineKeyboardMarkup(buttons)
 
@@ -420,17 +434,11 @@ async def receive_video_for_post(update: Update, context: ContextTypes.DEFAULT_T
         else:
             photo_caption = f"📝 ဇာတ်ကားအကြောင်း\n\n{caption_full}"
 
-        await update.message.reply_photo(
-            photo=poster,
-            caption=photo_caption,
-            reply_markup=reply_markup
-        )
-
+        await update.message.reply_photo(photo=poster, caption=photo_caption, reply_markup=reply_markup)
         await update.message.reply_text(
             f"**Deep Link (ဇာတ်ကားရယူရန်):**\n{deep_link}\n\n"
             f"ဤလင့်ကို ကူးယူ၍လည်း အသုံးပြုနိုင်ပါသည်။"
         )
-
         await update.message.reply_text("✅ **Post ဖန်တီးပြီးပါပြီ။**\n\nဤ Post ကို Forward လုပ်ပြီး Channel မှာ တင်လိုက်ပါ။")
         context.user_data.clear()
         return ConversationHandler.END
@@ -524,24 +532,17 @@ async def batchlink_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def batchlink_receive_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         return ConversationHandler.END
-
     video = None
-    file_name = None
-
     if update.message.video:
         video = update.message.video
-        file_name = video.file_name or "video.mp4"
     elif update.message.document and update.message.document.mime_type and update.message.document.mime_type.startswith('video/'):
         video = update.message.document
-        file_name = video.file_name or "video.mp4"
-
     if not video:
-        await update.message.reply_text(
-            "❌ ကျေးဇူးပြု၍ **Video file** တစ်ခု ပို့ပေးပါ။\n"
-            "(Forward လုပ်ထားသော Video များကို တစ်ခုချင်းစီ ပို့ပါ။)"
-        )
+        await update.message.reply_text("❌ ကျေးဇူးပြု၍ Video file တစ်ခု ပို့ပေးပါ။ (batch အတွက်)")
         return BATCHLINK_VIDEO
-
+    file_name = getattr(video, 'file_name', None)
+    if not file_name:
+        file_name = "ဇာတ်ကား"
     batch_videos = context.user_data.get('batch_videos', [])
     batch_videos.append({"file_id": video.file_id, "file_name": file_name})
     context.user_data['batch_videos'] = batch_videos
@@ -554,16 +555,14 @@ async def batchlink_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
     batch_videos = context.user_data.get('batch_videos', [])
     if not batch_videos:
-        await update.message.reply_text("❌ Video ဖိုင်များ မတွေ့ပါ။ /batchlink ဖြင့် ထပ်မံစတင်ပြီး Video များကို **တစ်ခုချင်းစီ** ပို့ပါ။")
+        await update.message.reply_text("❌ Video ဖိုင်များ မတွေ့ပါ။ /batchlink ဖြင့် ထပ်မံစတင်ပါ။")
         return ConversationHandler.END
-
     results = []
     for v in batch_videos:
         payload = generate_payload()
         save_file_info(payload, v["file_id"], v["file_name"])
         deep_link = create_deep_linked_url(BOT_USERNAME, payload)
         results.append(f"• **{v['file_name']}**\n  {deep_link}\n")
-
     response_text = "📦 **Batch Deep Links**\n\n" + "\n".join(results) + "\nဤလင့်များကို ကူးယူ၍ မျှဝေနိုင်ပါသည်။ (Channel 4 ခုလုံးဝင်ထားရန် လိုအပ်)"
     if len(response_text) > 4000:
         response_text = response_text[:4000] + "\n...(စာရင်းတိုသွားပါသည်)"
@@ -574,89 +573,6 @@ async def batchlink_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cancel_batchlink(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         return ConversationHandler.END
-    await update.message.reply_text("လုပ်ဆောင်ချက် ပယ်ဖျက်ပြီးပါပြီ။")
-    context.user_data.clear()
-    return ConversationHandler.END
-
-# ---------- /multilink Command (For Series/Episodes with multiple buttons) ----------
-MULTILINK_POSTER, MULTILINK_ITEMS = range(2)
-
-async def multilink_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id):
-        await update.message.reply_text("⛔ သင်သည် Admin မဟုတ်ပါ။")
-        return ConversationHandler.END
-    await update.message.reply_text("🎬 ဇာတ်လမ်းတွဲအတွက် **ပုံတစ်ပုံ (Poster)** ပို့ပေးပါ...")
-    return MULTILINK_POSTER
-
-async def multilink_receive_poster(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message.photo:
-        await update.message.reply_text("ပုံတစ်ပုံ ပို့ပေးပါ။")
-        return MULTILINK_POSTER
-    context.user_data['multilink_poster'] = update.message.photo[-1].file_id
-    context.user_data['multilink_items'] = []  # list of (label, url)
-    await update.message.reply_text(
-        "📌 **အပိုင်းအမည်များနှင့် Deep Links များကို တစ်ကြိမ်လျှင် တစ်ခုချင်း ဆက်တိုက်ပို့ပါ။**\n\n"
-        "ပုံစံ: `Episode 1 - https://t.me/bot?start=xxx`\n"
-        "(သို့) Link သီးသန့်ပို့ပါက `Episode X` ဟု နာမည်ပေးပါမည်။\n\n"
-        "အားလုံးပို့ပြီးပါက `/done` ရိုက်ပါ။\n"
-        "ဖျက်သိမ်းရန် `/cancel` ရိုက်ပါ။"
-    )
-    return MULTILINK_ITEMS
-
-async def multilink_receive_item(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text
-    if not text:
-        await update.message.reply_text("ကျေးဇူးပြု၍ စာသားဖြင့် ပို့ပါ။")
-        return MULTILINK_ITEMS
-
-    # Parse label and url
-    label = None
-    url = None
-    if " - " in text:
-        parts = text.split(" - ", 1)
-        label = parts[0].strip()
-        url = parts[1].strip()
-    elif text.startswith("http"):
-        url = text.strip()
-        label = f"Episode {len(context.user_data.get('multilink_items', [])) + 1}"
-    else:
-        await update.message.reply_text("ပုံစံမှန်ကန်အောင် `Episode 1 - https://t.me/...` ဖြင့် ပို့ပါ။")
-        return MULTILINK_ITEMS
-
-    if not url.startswith("http"):
-        await update.message.reply_text("လင့်သည် http/https ဖြင့် စတင်ရပါမည်။")
-        return MULTILINK_ITEMS
-
-    items = context.user_data.get('multilink_items', [])
-    items.append((label, url))
-    context.user_data['multilink_items'] = items
-    await update.message.reply_text(f"✅ **{label}** ကို လက်ခံပြီးပါပြီ။\n(စုစုပေါင်း {len(items)} ခု)\n\nဆက်လက်ပို့ရန် သို့မဟုတ် `/done` ရိုက်ပါ။")
-    return MULTILINK_ITEMS
-
-async def multilink_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    poster = context.user_data.get('multilink_poster')
-    items = context.user_data.get('multilink_items', [])
-    if not poster or not items:
-        await update.message.reply_text("ပုံ သို့မဟုတ် အပိုင်းများ မတွေ့ပါ။ /multilink ဖြင့် ထပ်မံစတင်ပါ။")
-        return ConversationHandler.END
-
-    # Build buttons
-    buttons = []
-    for label, url in items:
-        buttons.append([InlineKeyboardButton(label, url=url)])
-    reply_markup = InlineKeyboardMarkup(buttons)
-
-    # Send the poster with buttons
-    await update.message.reply_photo(
-        photo=poster,
-        caption="📺 **ဇာတ်လမ်းတွဲများ**\n\nအောက်ပါခလုတ်များမှ အပိုင်းအလိုက် ရွေးချယ်နိုင်ပါသည်။",
-        reply_markup=reply_markup
-    )
-    await update.message.reply_text("✅ **Series Post ဖန်တီးပြီးပါပြီ။**\n\nဤ Message ကို Forward လုပ်ပြီး Channel မှာ တင်လိုက်ပါ။")
-    context.user_data.clear()
-    return ConversationHandler.END
-
-async def cancel_multilink(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("လုပ်ဆောင်ချက် ပယ်ဖျက်ပြီးပါပြီ။")
     context.user_data.clear()
     return ConversationHandler.END
@@ -767,6 +683,78 @@ async def cancel_channelpost(update: Update, context: ContextTypes.DEFAULT_TYPE)
     context.user_data.clear()
     return ConversationHandler.END
 
+# ---------- /convert_old Command ----------
+async def convert_old(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("⛔ သင်သည် Admin မဟုတ်ပါ။")
+        return
+
+    await update.message.reply_text("⏳ စတင်နေပါပြီ... JSON ဖိုင်ဖတ်နေသည်...")
+
+    if not os.path.exists('old_posts.json'):
+        await update.message.reply_text("❌ old_posts.json ဖိုင်မတွေ့ပါ။ scan_channels.py ကို အရင်ဦးစွာ run ပါ။")
+        return
+
+    with open('old_posts.json', 'r', encoding='utf-8') as f:
+        posts = json.load(f)
+
+    if not posts:
+        await update.message.reply_text("❌ JSON ဖိုင်တွင် Post မရှိပါ။")
+        return
+
+    await update.message.reply_text(f"📊 {len(posts)} ခုကို စတင်ပြောင်းလဲနေပါပြီ... (ဤအချိန်အနည်းငယ်ကြာနိုင်ပါသည်)")
+
+    success = 0
+    fail = 0
+    for idx, post in enumerate(posts, 1):
+        try:
+            file_id = post.get('file_id')
+            caption = post.get('caption', '')
+            photo_id = post.get('photo_id')
+            target_channel = post.get('channel')
+
+            if not file_id or not target_channel:
+                fail += 1
+                continue
+
+            payload = generate_payload()
+            file_name = f"movie_{post['message_id']}"
+            save_file_info(payload, file_id, file_name)
+            deep_link = create_deep_linked_url(BOT_USERNAME, payload)
+
+            button = InlineKeyboardButton("🎬 ဇာတ်ကားရယူရန်", url=deep_link)
+            reply_markup = InlineKeyboardMarkup([[button]])
+
+            if photo_id:
+                await context.bot.send_photo(
+                    chat_id=target_channel,
+                    photo=photo_id,
+                    caption=caption[:1024] if caption else f"Movie #{post['message_id']}",
+                    reply_markup=reply_markup
+                )
+            else:
+                await context.bot.send_message(
+                    chat_id=target_channel,
+                    text=f"{caption}\n\n👇 ဇာတ်ကားရယူရန် အောက်ပါခလုတ်ကို နှိပ်ပါ။" if caption else f"Movie #{post['message_id']}\n\n👇 ဇာတ်ကားရယူရန် အောက်ပါခလုတ်ကို နှိပ်ပါ။",
+                    reply_markup=reply_markup
+                )
+
+            success += 1
+            if idx % 50 == 0:
+                await update.message.reply_text(f"✅ {idx}/{len(posts)} ပြီးဆုံးသည်...")
+
+            await asyncio.sleep(0.5)
+
+        except Exception as e:
+            logger.error(f"Error with post {post.get('message_id')}: {e}")
+            fail += 1
+
+    await update.message.reply_text(
+        f"✅ **ပြောင်းလဲခြင်း ပြီးဆုံးပါပြီ။**\n\n"
+        f"📊 အောင်မြင်သည်: {success}\n"
+        f"❌ မအောင်မြင်ပါ: {fail}"
+    )
+
 # ---------- Other Admin Commands ----------
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
@@ -842,7 +830,6 @@ async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     await show_menu(update, context)
 
-# ---------- Placeholders ----------
 async def schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         return
@@ -867,7 +854,6 @@ async def deleteall(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ---------- Application ----------
 application = Application.builder().token(TOKEN).build()
 
-# Conversation handlers
 newpost_handler = ConversationHandler(
     entry_points=[CommandHandler('newpost', newpost_start)],
     states={
@@ -905,18 +891,6 @@ batchlink_handler = ConversationHandler(
     fallbacks=[CommandHandler('cancel', cancel_batchlink)],
 )
 
-multilink_handler = ConversationHandler(
-    entry_points=[CommandHandler('multilink', multilink_start)],
-    states={
-        MULTILINK_POSTER: [MessageHandler(filters.PHOTO, multilink_receive_poster)],
-        MULTILINK_ITEMS: [
-            MessageHandler(filters.TEXT & ~filters.COMMAND, multilink_receive_item),
-            CommandHandler('done', multilink_done)
-        ],
-    },
-    fallbacks=[CommandHandler('cancel', cancel_multilink)],
-)
-
 application.add_handler(CommandHandler("start", start))
 application.add_handler(newpost_handler)
 application.add_handler(CommandHandler("newfile", newfile_command))
@@ -939,7 +913,7 @@ application.add_handler(CommandHandler("cancelschedule", cancelschedule))
 application.add_handler(CommandHandler("delete", delete_file))
 application.add_handler(CommandHandler("deleteall", deleteall))
 application.add_handler(batchlink_handler)
-application.add_handler(multilink_handler)
+application.add_handler(CommandHandler("convert_old", convert_old))
 application.add_handler(CallbackQueryHandler(menu_callback, pattern="menu_"))
 
 # ---------- Polling ----------
