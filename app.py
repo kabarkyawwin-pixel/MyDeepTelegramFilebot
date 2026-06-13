@@ -683,7 +683,7 @@ async def cancel_channelpost(update: Update, context: ContextTypes.DEFAULT_TYPE)
     context.user_data.clear()
     return ConversationHandler.END
 
-# ---------- /convert_old Command ----------
+# ---------- /convert_old Command (FIXED - channel id conversion) ----------
 async def convert_old(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("⛔ သင်သည် Admin မဟုတ်ပါ။")
@@ -711,11 +711,17 @@ async def convert_old(update: Update, context: ContextTypes.DEFAULT_TYPE):
             file_id = post.get('file_id')
             caption = post.get('caption', '')
             photo_id = post.get('photo_id')
-            target_channel = post.get('channel')
+            target_channel_raw = post.get('channel')
 
-            if not file_id or not target_channel:
+            if not file_id or not target_channel_raw:
                 fail += 1
                 continue
+
+            # Convert channel to integer if it's a string (e.g., "-1003753299714")
+            if isinstance(target_channel_raw, str):
+                target_channel = int(target_channel_raw)
+            else:
+                target_channel = target_channel_raw
 
             payload = generate_payload()
             file_name = f"movie_{post['message_id']}"
@@ -743,7 +749,7 @@ async def convert_old(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if idx % 50 == 0:
                 await update.message.reply_text(f"✅ {idx}/{len(posts)} ပြီးဆုံးသည်...")
 
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(0.3)
 
         except Exception as e:
             logger.error(f"Error with post {post.get('message_id')}: {e}")
