@@ -683,13 +683,35 @@ async def cancel_channelpost(update: Update, context: ContextTypes.DEFAULT_TYPE)
     context.user_data.clear()
     return ConversationHandler.END
 
-# ---------- /convert_old Command (ပြင်ဆင်ပြီး) ----------
+# ---------- /test_channel Command (Check if bot can post to channel) ----------
+async def test_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("⛔ သင်သည် Admin မဟုတ်ပါ။")
+        return
+    
+    # Ask user to provide a channel ID
+    await update.message.reply_text("ကျေးဇူးပြု၍ စမ်းသပ်လိုသော Channel ID (နံပါတ်) ကို ပို့ပေးပါ။ (ဥပမာ: -1001234567890)")
+    context.user_data['test_channel_mode'] = True
+
+async def test_channel_receive_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        return
+    if context.user_data.get('test_channel_mode'):
+        try:
+            channel_id = int(update.message.text.strip())
+            await context.bot.send_message(chat_id=channel_id, text="✅ စမ်းသပ်မက်ဆေ့ခ်ျ အောင်မြင်ပါသည်။ Bot သည် ဤ Channel တွင် ပို့နိုင်ပါသည်။")
+            await update.message.reply_text(f"✅ အောင်မြင်ပါသည်။ Bot က Channel {channel_id} သို့ မက်ဆေ့ခ်ျ ပို့နိုင်ပါသည်။")
+        except Exception as e:
+            await update.message.reply_text(f"❌ မအောင်မြင်ပါ။ အမှား: {str(e)}\n\nသေချာစေရန် - Bot အား Channel တွင် Admin ထည့်ထားပါ။")
+        finally:
+            context.user_data.pop('test_channel_mode', None)
+
+# ---------- /convert_old Command (ပြင်ဆင်ပြီး - အသေးစိတ် error ပြမယ်) ----------
 async def convert_old(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("⛔ သင်သည် Admin မဟုတ်ပါ။")
         return
 
-    # Optional limit parameter: /convert_old 500
     limit = None
     if context.args and len(context.args) > 0:
         try:
@@ -711,13 +733,13 @@ async def convert_old(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ JSON ဖိုင်တွင် Post မရှိပါ။")
         return
 
-    # Apply limit if specified
     posts = all_posts[:limit] if limit else all_posts
 
     await update.message.reply_text(f"📊 {len(posts)} ခုကို စတင်ပြောင်းလဲနေပါပြီ... (ဤအချိန်အနည်းငယ်ကြာနိုင်ပါသည်)")
 
     success = 0
     fail = 0
+    error_details = []
     for idx, post in enumerate(posts, 1):
         try:
             file_id = post.get('file_id')
@@ -727,15 +749,14 @@ async def convert_old(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             if not file_id or not target_channel_raw:
                 fail += 1
+                error_details.append(f"Post {idx}: Missing file_id or channel")
                 continue
 
-            # Convert channel ID to integer if it's a string (e.g., "-1003753299714")
             if isinstance(target_channel_raw, str):
                 target_channel = int(target_channel_raw)
             else:
                 target_channel = target_channel_raw
 
-            # Generate Deep Link
             payload = generate_payload()
             file_name = f"movie_{post.get('message_id', idx)}"
             save_file_info(payload, file_id, file_name)
@@ -744,7 +765,6 @@ async def convert_old(update: Update, context: ContextTypes.DEFAULT_TYPE):
             button = InlineKeyboardButton("🎬 ဇာတ်ကားရယူရန်", url=deep_link)
             reply_markup = InlineKeyboardMarkup([[button]])
 
-            # Send to channel
             if photo_id:
                 await context.bot.send_photo(
                     chat_id=target_channel,
@@ -763,17 +783,22 @@ async def convert_old(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if idx % 50 == 0:
                 await update.message.reply_text(f"✅ {idx}/{len(posts)} ပြီးဆုံးသည်...")
 
-            await asyncio.sleep(0.3)  # Slightly faster (0.3 seconds)
+            await asyncio.sleep(0.3)
 
         except Exception as e:
-            logger.error(f"Error with post {post.get('message_id', idx)}: {e}")
             fail += 1
+            err_msg = f"Post {idx}: {str(e)[:100]}"
+            error_details.append(err_msg)
+            logger.error(f"Error with post {post.get('message_id', idx)}: {e}")
+            # ပထမ 10 ခုအထိ error ကို admin ထံ ပြမယ်
+            if len(error_details) <= 10:
+                await update.message.reply_text(f"❌ {err_msg}")
 
-    await update.message.reply_text(
-        f"✅ **ပြောင်းလဲခြင်း ပြီးဆုံးပါပြီ။**\n\n"
-        f"📊 အောင်မြင်သည်: {success}\n"
-        f"❌ မအောင်မြင်ပါ: {fail}"
-    )
+    # နောက်ဆုံးအခြေအနေ
+    summary = f"✅ **ပြောင်းလဲခြင်း ပြီးဆုံးပါပြီ။**\n\n📊 အောင်မြင်သည်: {success}\n❌ မအောင်မြင်ပါ: {fail}"
+    if error_details:
+        summary += f"\n\n⚠️ ပထမ {min(10, len(error_details))} error များ:\n" + "\n".join(error_details[:10])
+    await update.message.reply_text(summary, parse_mode="Markdown")
 
 # ---------- Other Admin Commands ----------
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -934,6 +959,8 @@ application.add_handler(CommandHandler("delete", delete_file))
 application.add_handler(CommandHandler("deleteall", deleteall))
 application.add_handler(batchlink_handler)
 application.add_handler(CommandHandler("convert_old", convert_old))
+application.add_handler(CommandHandler("test_channel", test_channel))
+application.add_handler(MessageHandler(filters.TEXT & filters.ChatType.PRIVATE & ~filters.COMMAND, test_channel_receive_id))
 application.add_handler(CallbackQueryHandler(menu_callback, pattern="menu_"))
 
 # ---------- Polling ----------
