@@ -283,7 +283,8 @@ async def show_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🚫 Blocklist", callback_data="menu_blocklist")],
         [InlineKeyboardButton("🔇 Mute", callback_data="menu_mute")],
         [InlineKeyboardButton("🔊 Unmute", callback_data="menu_unmute")],
-        [InlineKeyboardButton("📦 Batch Link", callback_data="menu_batchlink")]
+        [InlineKeyboardButton("📦 Batch Link", callback_data="menu_batchlink")],
+        [InlineKeyboardButton("🎬 Series Post", callback_data="menu_multilink")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text("🤖 **Admin Menu**\n\nအောက်ပါခလုတ်များကို နှိပ်ပါ။", reply_markup=reply_markup, parse_mode="Markdown")
@@ -328,8 +329,10 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("🔊 Maintenance mode ပိတ်ထားပါသည်။")
     elif data == "menu_batchlink":
         await query.edit_message_text("📦 `/batchlink` command ကို သုံးပါ။ (Video များစုပြီး `/done` ဖြင့် Deep Link စာရင်းရယူရန်)")
+    elif data == "menu_multilink":
+        await query.edit_message_text("🎬 `/multilink` command ကို သုံးပါ။ (Series/Episode များအတွက် Buttons အစုံဖန်တီးရန်)")
 
-# ---------- /newpost Command ----------
+# ---------- /newpost Command (unchanged) ----------
 POSTER, CAPTION, VIDEO_FILE = range(3)
 
 async def newpost_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -500,7 +503,7 @@ async def handle_video_for_link(update: Update, context: ContextTypes.DEFAULT_TY
         else:
             await update.message.reply_text("Video file တစ်ခု ပို့ပေးပါ။")
 
-# ---------- /batchlink Command (Enhanced) ----------
+# ---------- /batchlink Command ----------
 BATCHLINK_VIDEO = range(1)
 
 async def batchlink_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -575,7 +578,90 @@ async def cancel_batchlink(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
     return ConversationHandler.END
 
-# ---------- /channelpost Command (Fixed) ----------
+# ---------- /multilink Command (For Series/Episodes with multiple buttons) ----------
+MULTILINK_POSTER, MULTILINK_ITEMS = range(2)
+
+async def multilink_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("⛔ သင်သည် Admin မဟုတ်ပါ။")
+        return ConversationHandler.END
+    await update.message.reply_text("🎬 ဇာတ်လမ်းတွဲအတွက် **ပုံတစ်ပုံ (Poster)** ပို့ပေးပါ...")
+    return MULTILINK_POSTER
+
+async def multilink_receive_poster(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message.photo:
+        await update.message.reply_text("ပုံတစ်ပုံ ပို့ပေးပါ။")
+        return MULTILINK_POSTER
+    context.user_data['multilink_poster'] = update.message.photo[-1].file_id
+    context.user_data['multilink_items'] = []  # list of (label, url)
+    await update.message.reply_text(
+        "📌 **အပိုင်းအမည်များနှင့် Deep Links များကို တစ်ကြိမ်လျှင် တစ်ခုချင်း ဆက်တိုက်ပို့ပါ။**\n\n"
+        "ပုံစံ: `Episode 1 - https://t.me/bot?start=xxx`\n"
+        "(သို့) Link သီးသန့်ပို့ပါက `Episode X` ဟု နာမည်ပေးပါမည်။\n\n"
+        "အားလုံးပို့ပြီးပါက `/done` ရိုက်ပါ။\n"
+        "ဖျက်သိမ်းရန် `/cancel` ရိုက်ပါ။"
+    )
+    return MULTILINK_ITEMS
+
+async def multilink_receive_item(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+    if not text:
+        await update.message.reply_text("ကျေးဇူးပြု၍ စာသားဖြင့် ပို့ပါ။")
+        return MULTILINK_ITEMS
+
+    # Parse label and url
+    label = None
+    url = None
+    if " - " in text:
+        parts = text.split(" - ", 1)
+        label = parts[0].strip()
+        url = parts[1].strip()
+    elif text.startswith("http"):
+        url = text.strip()
+        label = f"Episode {len(context.user_data.get('multilink_items', [])) + 1}"
+    else:
+        await update.message.reply_text("ပုံစံမှန်ကန်အောင် `Episode 1 - https://t.me/...` ဖြင့် ပို့ပါ။")
+        return MULTILINK_ITEMS
+
+    if not url.startswith("http"):
+        await update.message.reply_text("လင့်သည် http/https ဖြင့် စတင်ရပါမည်။")
+        return MULTILINK_ITEMS
+
+    items = context.user_data.get('multilink_items', [])
+    items.append((label, url))
+    context.user_data['multilink_items'] = items
+    await update.message.reply_text(f"✅ **{label}** ကို လက်ခံပြီးပါပြီ။\n(စုစုပေါင်း {len(items)} ခု)\n\nဆက်လက်ပို့ရန် သို့မဟုတ် `/done` ရိုက်ပါ။")
+    return MULTILINK_ITEMS
+
+async def multilink_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    poster = context.user_data.get('multilink_poster')
+    items = context.user_data.get('multilink_items', [])
+    if not poster or not items:
+        await update.message.reply_text("ပုံ သို့မဟုတ် အပိုင်းများ မတွေ့ပါ။ /multilink ဖြင့် ထပ်မံစတင်ပါ။")
+        return ConversationHandler.END
+
+    # Build buttons
+    buttons = []
+    for label, url in items:
+        buttons.append([InlineKeyboardButton(label, url=url)])
+    reply_markup = InlineKeyboardMarkup(buttons)
+
+    # Send the poster with buttons
+    await update.message.reply_photo(
+        photo=poster,
+        caption="📺 **ဇာတ်လမ်းတွဲများ**\n\nအောက်ပါခလုတ်များမှ အပိုင်းအလိုက် ရွေးချယ်နိုင်ပါသည်။",
+        reply_markup=reply_markup
+    )
+    await update.message.reply_text("✅ **Series Post ဖန်တီးပြီးပါပြီ။**\n\nဤ Message ကို Forward လုပ်ပြီး Channel မှာ တင်လိုက်ပါ။")
+    context.user_data.clear()
+    return ConversationHandler.END
+
+async def cancel_multilink(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("လုပ်ဆောင်ချက် ပယ်ဖျက်ပြီးပါပြီ။")
+    context.user_data.clear()
+    return ConversationHandler.END
+
+# ---------- /channelpost Command ----------
 CHANNELPOST_PHOTO, CHANNELPOST_VIDEO = range(2)
 
 async def channelpost_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -781,6 +867,7 @@ async def deleteall(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ---------- Application ----------
 application = Application.builder().token(TOKEN).build()
 
+# Conversation handlers
 newpost_handler = ConversationHandler(
     entry_points=[CommandHandler('newpost', newpost_start)],
     states={
@@ -818,6 +905,18 @@ batchlink_handler = ConversationHandler(
     fallbacks=[CommandHandler('cancel', cancel_batchlink)],
 )
 
+multilink_handler = ConversationHandler(
+    entry_points=[CommandHandler('multilink', multilink_start)],
+    states={
+        MULTILINK_POSTER: [MessageHandler(filters.PHOTO, multilink_receive_poster)],
+        MULTILINK_ITEMS: [
+            MessageHandler(filters.TEXT & ~filters.COMMAND, multilink_receive_item),
+            CommandHandler('done', multilink_done)
+        ],
+    },
+    fallbacks=[CommandHandler('cancel', cancel_multilink)],
+)
+
 application.add_handler(CommandHandler("start", start))
 application.add_handler(newpost_handler)
 application.add_handler(CommandHandler("newfile", newfile_command))
@@ -840,13 +939,13 @@ application.add_handler(CommandHandler("cancelschedule", cancelschedule))
 application.add_handler(CommandHandler("delete", delete_file))
 application.add_handler(CommandHandler("deleteall", deleteall))
 application.add_handler(batchlink_handler)
+application.add_handler(multilink_handler)
 application.add_handler(CallbackQueryHandler(menu_callback, pattern="menu_"))
 
-# ---------- Polling (FIXED - robust event loop handling) ----------
+# ---------- Polling ----------
 def run_bot():
     while True:
         try:
-            # Create a new event loop for this thread
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             logger.info("Starting bot polling...")
@@ -861,8 +960,5 @@ def run_flask():
     app.run(host="0.0.0.0", port=port)
 
 if __name__ == "__main__":
-    # Run Flask in background thread
-    flask_thread = threading.Thread(target=run_flask, daemon=True)
-    flask_thread.start()
-    # Run bot in main thread
+    threading.Thread(target=run_flask, daemon=True).start()
     run_bot()
