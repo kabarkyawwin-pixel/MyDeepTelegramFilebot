@@ -1,13 +1,11 @@
 import os
 import asyncio
-import threading
 import logging
 import sys
 import secrets
-import json
 import re
 from datetime import datetime
-from flask import Flask, request
+from flask import Flask
 import requests
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters, CallbackQueryHandler
@@ -20,6 +18,10 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "Bot is running (polling mode)"
 
 # ---------- MongoDB ----------
 MONGO_URI = os.environ.get("MONGO_URI")
@@ -86,7 +88,7 @@ def increment_attempts(user_id):
 def reset_attempts(user_id):
     users_collection.update_one({"user_id": user_id}, {"$set": {"attempts": 0}}, upsert=True)
 
-# ---------- Config ----------
+# ---------- Telegram Config ----------
 TOKEN = os.environ.get("TELEGRAM_TOKEN")
 if not TOKEN:
     logger.error("TELEGRAM_TOKEN not set")
@@ -94,7 +96,7 @@ if not TOKEN:
 
 BOT_USERNAME = os.environ.get("BOT_USERNAME")
 if not BOT_USERNAME:
-    logger.error("BOT_USERNAME not set! Deep links will not work.")
+    logger.warning("BOT_USERNAME not set! Deep links will not work.")
 
 ADMIN_IDS = [int(x.strip()) for x in os.environ.get("ADMIN_ID", "").split(",") if x.strip()]
 
@@ -105,17 +107,15 @@ REQUIRED_CHANNELS = [
     {"id": "-1003785717514", "name": "🎵 မြန်မာသီချင်းချန်နယ်", "invite": "https://t.me/wznmusiclibary"}
 ]
 
-POST_CHANNELS = []
-
 def is_admin(user_id):
     return user_id in ADMIN_IDS
 
 def generate_payload():
     return secrets.token_urlsafe(16)
 
-async def is_member_of_channel(user_id, channel_id, bot):
+async def is_member_of_channel(user_id, channel_id, context):
     try:
-        member = await bot.get_chat_member(chat_id=channel_id, user_id=user_id)
+        member = await context.bot.get_chat_member(chat_id=channel_id, user_id=user_id)
         return member.status in ["member", "administrator", "creator"]
     except:
         return False
@@ -230,74 +230,60 @@ def format_movie_info_plain(movie):
 # ========== /movie ==========
 async def movie_command(update, context):
     if not context.args:
-        await update.message.reply_text("ဥပမာ - /movie Inception 2010")
+        await update.message.reply_text("Usage: /movie Movie Name Year")
         return
     movie_input = ' '.join(context.args)
-    msg = await update.message.reply_text(f"🔍 '{movie_input}' ကိုရှာနေသည်...")
+    msg = await update.message.reply_text(f"Searching for '{movie_input}'...")
     movie = get_movie_info(movie_input)
     if not movie:
-        await msg.edit_text("မတွေ့ပါ။ အင်္ဂလိပ်အမည်ထည့်ပါ။")
+        await msg.edit_text("Movie not found. Try English name.")
         return
     text = format_movie_info_plain(movie)
     keyboard = []
     if len(movie['plot']) > 800:
         url = await create_telegraph_page_movie(f"{movie['title']} ({movie['year']})", movie['plot'])
         if url:
-            keyboard.append([InlineKeyboardButton("📖 ဇာတ်ညွှန်းအပြည့်", url=url)])
+            keyboard.append([InlineKeyboardButton("Full Plot", url=url)])
     await msg.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard) if keyboard else None)
 
-# ========== /createpost ==========
-# Admin က /createpost "Movie Name Year" ဆိုပြီး ရိုက်လိုက်တာနဲ့ အလုပ်စလုပ်မယ်
+# ========== /createpost (in-memory state) ==========
+CREATE_STATES = {}
 
-async def createpost_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def createpost_command(update, context):
     if not is_admin(update.effective_user.id):
-        await update.message.reply_text("Admin only")
+        await update.message.reply_text("Admin only.")
         return
-    
     if not context.args:
-        await update.message.reply_text("Usage: /createpost \"Movie Name Year\"\nExample: /createpost \"Inception 2010\"")
+        await update.message.reply_text("Usage: /createpost Movie Name Year\nExample: /createpost Inception 2010")
         return
-    
-    movie_input = ' '.join(context.args).strip('"')
-    
-    # Step 1: Fetch movie info
+    movie_input = ' '.join(context.args)
     movie = get_movie_info(movie_input)
     if not movie:
-        await update.message.reply_text("Movie not found. Please check the name and year.")
+        await update.message.reply_text("Movie not found.")
         return
-    
-    # Store movie data in context.user_data
-    context.user_data['movie_data'] = movie
-    context.user_data['step'] = 'waiting_for_poster'
-    
-    await update.message.reply_text(
-        f"✅ Movie found:\n{format_movie_info_plain(movie)}\n\n"
-        "Now send me the poster image for this movie."
-    )
+    user_id = update.effective_user.id
+    CREATE_STATES[user_id] = {'movie': movie, 'step': 'waiting_poster'}
+    await update.message.reply_text(f"✅ Movie found:\n{format_movie_info_plain(movie)}\n\nNow send me the poster image.")
 
-async def createpost_receive_poster(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id):
+async def handle_poster(update, context):
+    user_id = update.effective_user.id
+    if user_id not in CREATE_STATES:
         return
-    
-    if context.user_data.get('step') != 'waiting_for_poster':
+    if CREATE_STATES[user_id]['step'] != 'waiting_poster':
         return
-    
     if not update.message.photo:
-        await update.message.reply_text("Please send a photo as the poster.")
+        await update.message.reply_text("Please send a photo as poster.")
         return
-    
-    context.user_data['poster'] = update.message.photo[-1].file_id
-    context.user_data['step'] = 'waiting_for_video'
-    
-    await update.message.reply_text("Poster received! Now send me the video file for this movie.")
+    CREATE_STATES[user_id]['poster'] = update.message.photo[-1].file_id
+    CREATE_STATES[user_id]['step'] = 'waiting_video'
+    await update.message.reply_text("Poster received. Now send me the video file.")
 
-async def createpost_receive_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id):
+async def handle_video_for_create(update, context):
+    user_id = update.effective_user.id
+    if user_id not in CREATE_STATES:
         return
-    
-    if context.user_data.get('step') != 'waiting_for_video':
+    if CREATE_STATES[user_id]['step'] != 'waiting_video':
         return
-    
     video = None
     if update.message.video:
         video = update.message.video
@@ -307,53 +293,39 @@ async def createpost_receive_video(update: Update, context: ContextTypes.DEFAULT
         if doc.mime_type and doc.mime_type.startswith('video/'):
             video = doc
             file_name = doc.file_name or "movie"
-    
     if not video:
         await update.message.reply_text("Please send a valid video file (mp4, mkv, etc.)")
         return
-    
     if not BOT_USERNAME:
         await update.message.reply_text("BOT_USERNAME not configured.")
         return
-    
-    # Generate deep link
     payload = generate_payload()
     save_file_info(payload, video.file_id, file_name)
     deep_link = create_deep_linked_url(BOT_USERNAME, payload)
-    
-    # Prepare final post
-    movie = context.user_data.get('movie_data')
-    poster = context.user_data.get('poster')
-    
-    if not movie or not poster:
-        await update.message.reply_text("Something went wrong. Please start over with /createpost.")
-        return
-    
+    movie = CREATE_STATES[user_id]['movie']
+    poster = CREATE_STATES[user_id]['poster']
     text = format_movie_info_plain(movie)
-    keyboard = [[InlineKeyboardButton("🎬 ရယူရန်", url=deep_link)]]
+    keyboard = [[InlineKeyboardButton("🎬 Get Movie", url=deep_link)]]
     if len(movie['plot']) > 800:
         url = await create_telegraph_page_movie(f"{movie['title']} ({movie['year']})", movie['plot'])
         if url:
-            keyboard.append([InlineKeyboardButton("📖 ဇာတ်ညွှန်းအပြည့်", url=url)])
+            keyboard.append([InlineKeyboardButton("Full Plot", url=url)])
     for ch in REQUIRED_CHANNELS:
         keyboard.append([InlineKeyboardButton(ch['name'], url=ch['invite'])])
-    
     await update.message.reply_photo(photo=poster, caption=text, reply_markup=InlineKeyboardMarkup(keyboard))
-    await update.message.reply_text("✅ Post is ready! You can forward this to your channel.")
-    
-    # Clear the stored data
-    context.user_data.clear()
+    await update.message.reply_text("✅ Post ready. Forward to your channel.")
+    del CREATE_STATES[user_id]
 
 # ========== /newfile ==========
 async def newfile_command(update, context):
     if not is_admin(update.effective_user.id):
-        await update.message.reply_text("Admin only")
+        await update.message.reply_text("Admin only.")
         return
     await update.message.reply_text("Send me a video file.")
-    context.user_data['waiting_newfile'] = True
+    context.user_data['newfile_waiting'] = True
 
-async def newfile_receive_video(update, context):
-    if not context.user_data.get('waiting_newfile'):
+async def newfile_receive(update, context):
+    if not context.user_data.get('newfile_waiting'):
         return
     if not is_admin(update.effective_user.id):
         return
@@ -367,114 +339,92 @@ async def newfile_receive_video(update, context):
             video = doc
             file_name = doc.file_name or "video"
     if not video:
-        await update.message.reply_text("Please send a valid video file.")
+        await update.message.reply_text("Please send a video file.")
         return
     if not BOT_USERNAME:
         await update.message.reply_text("BOT_USERNAME not set.")
-        context.user_data.pop('waiting_newfile', None)
+        context.user_data.pop('newfile_waiting', None)
         return
     payload = generate_payload()
     save_file_info(payload, video.file_id, file_name)
     deep_link = create_deep_linked_url(BOT_USERNAME, payload)
-    await update.message.reply_text(f"Deep Link:\n{deep_link}\n\n{file_name}")
-    context.user_data.pop('waiting_newfile', None)
+    await update.message.reply_text(f"🔗 Deep Link:\n{deep_link}\n\n{file_name}")
+    context.user_data.pop('newfile_waiting', None)
 
 # ========== /start ==========
 async def start(update, context):
     user_id = update.effective_user.id
     if context.args:
         payload = context.args[0]
-        file_info = get_file_info(payload)
-        if not file_info:
+        info = get_file_info(payload)
+        if not info:
             await update.message.reply_text("Invalid link.")
             return
         if is_user_blocked(user_id):
             await update.message.reply_text("You are blocked.")
             return
-        # Channel check omitted for brevity (you can add your own)
-        await update.message.reply_text(f"📹 Sending {file_info['file_name']}...")
-        await context.bot.send_video(chat_id=user_id, video=file_info['file_id'], caption=f"🎬 {file_info['file_name']}")
+        # Optional channel check here
+        await update.message.reply_text(f"Sending {info['file_name']}...")
+        await context.bot.send_video(chat_id=user_id, video=info['file_id'], caption=f"🎬 {info['file_name']}")
         add_user(user_id)
         increment_requests()
     else:
         if is_admin(user_id):
             await show_menu(update, context)
         else:
-            await update.message.reply_text("Welcome. Use /movie or channel posts.")
+            await update.message.reply_text("Welcome. Use /movie or follow channel posts.")
 
-# ---------- Admin Menu ----------
+# ---------- Menu ----------
 async def show_menu(update, context):
     keyboard = [
-        [InlineKeyboardButton("➕ Post အသစ်", callback_data="menu_createpost")],
+        [InlineKeyboardButton("➕ New Post", callback_data="menu_createpost")],
         [InlineKeyboardButton("🔗 Deep Link", callback_data="menu_newfile")],
         [InlineKeyboardButton("📊 Stats", callback_data="menu_stats")],
     ]
-    await update.message.reply_text("Menu", reply_markup=InlineKeyboardMarkup(keyboard))
+    await update.message.reply_text("Admin Menu", reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def menu_callback(update, context):
     query = update.callback_query
     await query.answer()
     if not is_admin(query.from_user.id):
-        await query.edit_message_text("No permission")
+        await query.edit_message_text("No permission.")
         return
     if query.data == "menu_createpost":
-        await query.edit_message_text("Usage: /createpost \"Movie Name Year\"")
+        await query.edit_message_text("Send: /createpost Movie Name Year")
     elif query.data == "menu_newfile":
-        await query.edit_message_text("/newfile")
+        await query.edit_message_text("Send: /newfile then video")
     elif query.data == "menu_stats":
         total_users = users_collection.count_documents({})
         total_req = get_total_requests()
-        await query.edit_message_text(f"Users: {total_users}\nRequests: {total_req}")
+        await query.edit_message_text(f"👥 Users: {total_users}\n🎬 Requests: {total_req}")
 
 async def stats(update, context):
-    if not is_admin(update.effective_user.id):
-        return
-    total_users = users_collection.count_documents({})
-    total_req = get_total_requests()
-    await update.message.reply_text(f"Users: {total_users}\nRequests: {total_req}")
+    if is_admin(update.effective_user.id):
+        total_users = users_collection.count_documents({})
+        total_req = get_total_requests()
+        await update.message.reply_text(f"Users: {total_users}\nRequests: {total_req}")
 
-# ---------- Build Application ----------
+# ---------- Polling Setup ----------
 application = Application.builder().token(TOKEN).build()
 
 application.add_handler(CommandHandler("start", start))
 application.add_handler(CommandHandler("movie", movie_command))
 application.add_handler(CommandHandler("createpost", createpost_command))
-application.add_handler(MessageHandler(filters.PHOTO, createpost_receive_poster))
-application.add_handler(MessageHandler(filters.VIDEO | filters.Document.ALL, createpost_receive_video))
+application.add_handler(MessageHandler(filters.PHOTO, handle_poster))
+application.add_handler(MessageHandler(filters.VIDEO | filters.Document.ALL, handle_video_for_create))
 application.add_handler(CommandHandler("newfile", newfile_command))
-application.add_handler(MessageHandler(filters.VIDEO | filters.Document.ALL, newfile_receive_video))
+application.add_handler(MessageHandler(filters.VIDEO | filters.Document.ALL, newfile_receive))
 application.add_handler(CommandHandler("stats", stats))
 application.add_handler(CommandHandler("menu", show_menu))
 application.add_handler(CallbackQueryHandler(menu_callback, pattern="menu_"))
 
-# ---------- Webhook ----------
-WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
-if not WEBHOOK_URL:
-    logger.error("WEBHOOK_URL not set.")
-    sys.exit(1)
-
-@app.route('/webhook', methods=['POST'])
-async def webhook():
-    if request.method == "POST":
-        update = Update.de_json(request.get_json(force=True), application.bot)
-        await application.process_update(update)
-        return "ok", 200
-
-async def set_webhook():
-    await application.bot.set_webhook(WEBHOOK_URL)
-    logger.info(f"Webhook set to {WEBHOOK_URL}")
-
-def start_flask():
+# ---------- Run ----------
+def run_flask():
     port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+    app.run(host="0.0.0.0", port=port, use_reloader=False)
 
 if __name__ == "__main__":
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(application.initialize())
-    loop.run_until_complete(set_webhook())
-    threading.Thread(target=start_flask, daemon=True).start()
-    try:
-        loop.run_forever()
-    except KeyboardInterrupt:
-        loop.run_until_complete(application.shutdown())
+    import threading
+    threading.Thread(target=run_flask, daemon=True).start()
+    logger.info("Starting bot polling...")
+    application.run_polling(allowed_updates=Update.ALL_TYPES)
