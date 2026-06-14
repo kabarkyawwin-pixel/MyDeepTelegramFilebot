@@ -10,7 +10,7 @@ from datetime import datetime
 from flask import Flask, request
 import requests
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, ContextTypes, ConversationHandler, MessageHandler, filters, CallbackQueryHandler
+from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters, CallbackQueryHandler
 from telegram.helpers import create_deep_linked_url
 from pymongo import MongoClient
 from telegraph import Telegraph
@@ -247,49 +247,57 @@ async def movie_command(update, context):
     await msg.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard) if keyboard else None)
 
 # ========== /createpost ==========
-CREATE_POSTER, CREATE_MOVIE_NAME, CREATE_VIDEO = range(3)
+# Admin က /createpost "Movie Name Year" ဆိုပြီး ရိုက်လိုက်တာနဲ့ အလုပ်စလုပ်မယ်
 
-async def createpost_start(update, context):
+async def createpost_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("Admin only")
-        return ConversationHandler.END
-    await update.message.reply_text("📸 Poster ပုံပို့ပါ။ (Caption တွင်ဇာတ်ကားအမည်ထည့်နိုင်သည်)")
-    return CREATE_POSTER
-
-async def createpost_receive_poster(update, context):
-    if not update.message.photo:
-        await update.message.reply_text("ပုံပို့ပါ")
-        return CREATE_POSTER
-    context.user_data['poster'] = update.message.photo[-1].file_id
-    if update.message.caption:
-        movie_input = update.message.caption.strip()
-        context.user_data['movie_name'] = movie_input
-        msg = await update.message.reply_text(f"🔍 '{movie_input}' ကိုရှာသည်...")
-        movie = get_movie_info(movie_input)
-        if not movie:
-            await msg.edit_text("မတွေ့ပါ")
-            return CREATE_POSTER
-        context.user_data['movie_data'] = movie
-        await msg.edit_text(f"✅ တွေ့ပါသည်။\n{format_movie_info_plain(movie)}")
-        await update.message.reply_text("🎬 Video ဖိုင်ပို့ပါ။")
-        return CREATE_VIDEO
-    else:
-        await update.message.reply_text("ဇာတ်ကားအမည်ရိုက်ပါ။")
-        return CREATE_MOVIE_NAME
-
-async def createpost_receive_movie_name(update, context):
-    movie_input = update.message.text.strip()
-    msg = await update.message.reply_text(f"🔍 '{movie_input}' ကိုရှာသည်...")
+        return
+    
+    if not context.args:
+        await update.message.reply_text("Usage: /createpost \"Movie Name Year\"\nExample: /createpost \"Inception 2010\"")
+        return
+    
+    movie_input = ' '.join(context.args).strip('"')
+    
+    # Step 1: Fetch movie info
     movie = get_movie_info(movie_input)
     if not movie:
-        await msg.edit_text("မတွေ့ပါ။ /cancel")
-        return CREATE_MOVIE_NAME
+        await update.message.reply_text("Movie not found. Please check the name and year.")
+        return
+    
+    # Store movie data in context.user_data
     context.user_data['movie_data'] = movie
-    await msg.edit_text(f"✅ {format_movie_info_plain(movie)}")
-    await update.message.reply_text("🎬 Video ဖိုင်ပို့ပါ။")
-    return CREATE_VIDEO
+    context.user_data['step'] = 'waiting_for_poster'
+    
+    await update.message.reply_text(
+        f"✅ Movie found:\n{format_movie_info_plain(movie)}\n\n"
+        "Now send me the poster image for this movie."
+    )
 
-async def createpost_receive_video(update, context):
+async def createpost_receive_poster(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        return
+    
+    if context.user_data.get('step') != 'waiting_for_poster':
+        return
+    
+    if not update.message.photo:
+        await update.message.reply_text("Please send a photo as the poster.")
+        return
+    
+    context.user_data['poster'] = update.message.photo[-1].file_id
+    context.user_data['step'] = 'waiting_for_video'
+    
+    await update.message.reply_text("Poster received! Now send me the video file for this movie.")
+
+async def createpost_receive_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        return
+    
+    if context.user_data.get('step') != 'waiting_for_video':
+        return
+    
     video = None
     if update.message.video:
         video = update.message.video
@@ -299,24 +307,28 @@ async def createpost_receive_video(update, context):
         if doc.mime_type and doc.mime_type.startswith('video/'):
             video = doc
             file_name = doc.file_name or "movie"
+    
     if not video:
-        await update.message.reply_text("Video ဖိုင် (mp4/mkv) ပို့ပါ။")
-        return CREATE_VIDEO
-
+        await update.message.reply_text("Please send a valid video file (mp4, mkv, etc.)")
+        return
+    
     if not BOT_USERNAME:
-        await update.message.reply_text("BOT_USERNAME missing")
-        return ConversationHandler.END
-
+        await update.message.reply_text("BOT_USERNAME not configured.")
+        return
+    
+    # Generate deep link
     payload = generate_payload()
     save_file_info(payload, video.file_id, file_name)
     deep_link = create_deep_linked_url(BOT_USERNAME, payload)
-
-    poster = context.user_data.get('poster')
+    
+    # Prepare final post
     movie = context.user_data.get('movie_data')
-    if not poster or not movie:
-        await update.message.reply_text("ဒေတာပျောက်နေသည်။ ပြန်စပါ။")
-        return ConversationHandler.END
-
+    poster = context.user_data.get('poster')
+    
+    if not movie or not poster:
+        await update.message.reply_text("Something went wrong. Please start over with /createpost.")
+        return
+    
     text = format_movie_info_plain(movie)
     keyboard = [[InlineKeyboardButton("🎬 ရယူရန်", url=deep_link)]]
     if len(movie['plot']) > 800:
@@ -325,23 +337,19 @@ async def createpost_receive_video(update, context):
             keyboard.append([InlineKeyboardButton("📖 ဇာတ်ညွှန်းအပြည့်", url=url)])
     for ch in REQUIRED_CHANNELS:
         keyboard.append([InlineKeyboardButton(ch['name'], url=ch['invite'])])
-
+    
     await update.message.reply_photo(photo=poster, caption=text, reply_markup=InlineKeyboardMarkup(keyboard))
-    await update.message.reply_text("✅ Post ပြင်ဆင်ပြီး။ Channel တွင် forward လုပ်ပါ။")
+    await update.message.reply_text("✅ Post is ready! You can forward this to your channel.")
+    
+    # Clear the stored data
     context.user_data.clear()
-    return ConversationHandler.END
-
-async def cancel_createpost(update, context):
-    await update.message.reply_text("Cancelled.")
-    context.user_data.clear()
-    return ConversationHandler.END
 
 # ========== /newfile ==========
 async def newfile_command(update, context):
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("Admin only")
         return
-    await update.message.reply_text("📤 Video ဖိုင်ပို့ပါ။")
+    await update.message.reply_text("Send me a video file.")
     context.user_data['waiting_newfile'] = True
 
 async def newfile_receive_video(update, context):
@@ -359,10 +367,10 @@ async def newfile_receive_video(update, context):
             video = doc
             file_name = doc.file_name or "video"
     if not video:
-        await update.message.reply_text("Video ဖိုင်ပို့ပါ။")
+        await update.message.reply_text("Please send a valid video file.")
         return
     if not BOT_USERNAME:
-        await update.message.reply_text("BOT_USERNAME missing")
+        await update.message.reply_text("BOT_USERNAME not set.")
         context.user_data.pop('waiting_newfile', None)
         return
     payload = generate_payload()
@@ -383,13 +391,16 @@ async def start(update, context):
         if is_user_blocked(user_id):
             await update.message.reply_text("You are blocked.")
             return
-        # Channel check (keep your original check here)
+        # Channel check omitted for brevity (you can add your own)
         await update.message.reply_text(f"📹 Sending {file_info['file_name']}...")
         await context.bot.send_video(chat_id=user_id, video=file_info['file_id'], caption=f"🎬 {file_info['file_name']}")
         add_user(user_id)
         increment_requests()
     else:
-        await update.message.reply_text("Welcome. Use /movie or channel posts.")
+        if is_admin(user_id):
+            await show_menu(update, context)
+        else:
+            await update.message.reply_text("Welcome. Use /movie or channel posts.")
 
 # ---------- Admin Menu ----------
 async def show_menu(update, context):
@@ -407,7 +418,7 @@ async def menu_callback(update, context):
         await query.edit_message_text("No permission")
         return
     if query.data == "menu_createpost":
-        await query.edit_message_text("/createpost")
+        await query.edit_message_text("Usage: /createpost \"Movie Name Year\"")
     elif query.data == "menu_newfile":
         await query.edit_message_text("/newfile")
     elif query.data == "menu_stats":
@@ -415,31 +426,31 @@ async def menu_callback(update, context):
         total_req = get_total_requests()
         await query.edit_message_text(f"Users: {total_users}\nRequests: {total_req}")
 
+async def stats(update, context):
+    if not is_admin(update.effective_user.id):
+        return
+    total_users = users_collection.count_documents({})
+    total_req = get_total_requests()
+    await update.message.reply_text(f"Users: {total_users}\nRequests: {total_req}")
+
 # ---------- Build Application ----------
 application = Application.builder().token(TOKEN).build()
 
-createpost_handler = ConversationHandler(
-    entry_points=[CommandHandler('createpost', createpost_start)],
-    states={
-        CREATE_POSTER: [MessageHandler(filters.PHOTO, createpost_receive_poster)],
-        CREATE_MOVIE_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, createpost_receive_movie_name)],
-        CREATE_VIDEO: [MessageHandler(filters.VIDEO | filters.Document.ALL, createpost_receive_video)],
-    },
-    fallbacks=[CommandHandler('cancel', cancel_createpost)],
-)
-
 application.add_handler(CommandHandler("start", start))
 application.add_handler(CommandHandler("movie", movie_command))
-application.add_handler(createpost_handler)
+application.add_handler(CommandHandler("createpost", createpost_command))
+application.add_handler(MessageHandler(filters.PHOTO, createpost_receive_poster))
+application.add_handler(MessageHandler(filters.VIDEO | filters.Document.ALL, createpost_receive_video))
 application.add_handler(CommandHandler("newfile", newfile_command))
 application.add_handler(MessageHandler(filters.VIDEO | filters.Document.ALL, newfile_receive_video))
+application.add_handler(CommandHandler("stats", stats))
 application.add_handler(CommandHandler("menu", show_menu))
 application.add_handler(CallbackQueryHandler(menu_callback, pattern="menu_"))
 
 # ---------- Webhook ----------
 WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
 if not WEBHOOK_URL:
-    logger.error("WEBHOOK_URL not set. Cannot run webhook mode.")
+    logger.error("WEBHOOK_URL not set.")
     sys.exit(1)
 
 @app.route('/webhook', methods=['POST'])
