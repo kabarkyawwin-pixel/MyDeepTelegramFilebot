@@ -122,14 +122,19 @@ REQUIRED_CHANNELS = [
     {"id": "-1003785717514", "name": "🎵 မြန်မာသီချင်းချန်နယ်", "invite": "https://t.me/wznmusiclibary"}
 ]
 
-POST_CHANNELS = []  # can be set via env if needed, but not mandatory
+POST_CHANNELS = []
 OTHER_CHANNELS = []
 MUSIC_CHANNEL_LINK = ""
 
 def is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS
 
-maintenance_mode = False
+# Use bot_data instead of global variable for maintenance mode
+async def set_maintenance_mode(context, mode):
+    await context.bot.set_bot_data({'maintenance_mode': mode})
+
+def is_maintenance_mode(context):
+    return context.bot_data.get('maintenance_mode', False)
 
 def generate_payload():
     return secrets.token_urlsafe(16)
@@ -211,7 +216,6 @@ def get_movie_info(movie_input):
                 return None
         plot_en = data.get('Plot', 'N/A')
         plot_my = translate_text(plot_en) if len(plot_en) < 5000 else plot_en
-        # Runtime conversion
         runtime_raw = data.get('Runtime', 'N/A')
         runtime_my = runtime_raw
         if runtime_raw != 'N/A' and 'min' in runtime_raw:
@@ -293,7 +297,6 @@ async def movie_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     formatted = format_movie_info_burmese(movie)
     keyboard = []
-    # Add Telegraph button only if plot is long (>1024 chars)
     if len(movie['plot']) > 1024:
         telegraph_url = await create_telegraph_page_movie(f"{movie['title']} ({movie['year']}) - ဇာတ်ညွှန်းအပြည့်", movie['plot'])
         if telegraph_url:
@@ -514,12 +517,10 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             msg = "🚫 **Blocked Users**\n\n" + "\n".join([f"• `{uid}`" for uid in blocked]) + "\n\n/unblock <user_id> ဖြင့် ပြန်ဖွင့်နိုင်ပါသည်။"
             await query.edit_message_text(msg, parse_mode="Markdown")
     elif data == "menu_mute":
-        global maintenance_mode
-        maintenance_mode = True
+        await context.bot.set_bot_data({'maintenance_mode': True})
         await query.edit_message_text("🔇 Maintenance mode ဖွင့်ထားပါသည်။ (Bot အလုပ်မလုပ်တော့ပါ)")
     elif data == "menu_unmute":
-        global maintenance_mode
-        maintenance_mode = False
+        await context.bot.set_bot_data({'maintenance_mode': False})
         await query.edit_message_text("🔊 Maintenance mode ပိတ်ထားပါသည်။ (Bot ပုံမှန်အလုပ်လုပ်ပါမည်)")
 
 # ========== Admin Command Implementations ==========
@@ -758,17 +759,15 @@ async def unblock(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ User ID ဂဏန်းသာထည့်ပါ။")
 
 async def mute(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global maintenance_mode
     if not is_admin(update.effective_user.id):
         return
-    maintenance_mode = True
+    await context.bot.set_bot_data({'maintenance_mode': True})
     await update.message.reply_text("🔇 Maintenance mode ဖွင့်ထားပါသည်။")
 
 async def unmute(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global maintenance_mode
     if not is_admin(update.effective_user.id):
         return
-    maintenance_mode = False
+    await context.bot.set_bot_data({'maintenance_mode': False})
     await update.message.reply_text("🔊 Maintenance mode ပိတ်ထားပါသည်။")
 
 async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
