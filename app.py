@@ -20,6 +20,14 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
+@app.route('/')
+def home():
+    return "Bot is running (webhook mode)"
+
+@app.route('/health')
+def health():
+    return "OK", 200
+
 # ---------- MongoDB ----------
 MONGO_URI = os.environ.get("MONGO_URI")
 if not MONGO_URI:
@@ -529,11 +537,18 @@ application.add_handler(CommandHandler("menu", menu_command))
 application.add_handler(CallbackQueryHandler(menu_callback, pattern="menu_"))
 
 @app.route('/webhook', methods=['POST'])
-async def webhook():
+def webhook():
     if request.method == "POST":
-        update = Update.de_json(request.get_json(force=True), application.bot)
-        await application.process_update(update)
-        return "ok", 200
+        try:
+            json_data = request.get_json(force=True)
+            update = Update.de_json(json_data, application.bot)
+            # Process update in the background (non-blocking)
+            asyncio.run_coroutine_threadsafe(application.process_update(update), loop)
+            return "ok", 200
+        except Exception as e:
+            logger.exception("Webhook error")
+            return "error", 500
+    return "method not allowed", 405
 
 def start_flask():
     port = int(os.environ.get("PORT", 5000))
