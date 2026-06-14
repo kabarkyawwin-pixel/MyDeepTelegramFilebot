@@ -42,14 +42,7 @@ if not MONGO_URI:
     logger.error("MONGO_URI environment variable not set!")
     sys.exit(1)
 
-try:
-    mongo_client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
-    mongo_client.admin.command('ping')
-    logger.info("MongoDB connected successfully")
-except Exception as e:
-    logger.error(f"MongoDB connection failed: {e}")
-    sys.exit(1)
-
+mongo_client = MongoClient(MONGO_URI)
 db = mongo_client["file_share_bot_v2"]
 file_store_collection = db["file_store"]
 users_collection = db["users"]
@@ -76,17 +69,12 @@ def get_all_users():
     return [doc["user_id"] for doc in users_collection.find({}, {"user_id": 1})]
 
 def save_file_info(payload, file_id, file_name):
-    try:
-        result = file_store_collection.update_one(
-            {"payload": payload},
-            {"$set": {"file_id": file_id, "file_name": file_name}},
-            upsert=True
-        )
-        logger.info(f"Saved to MongoDB: payload={payload}, file_id={file_id}, matched={result.matched_count}, modified={result.modified_count}")
-        return True
-    except Exception as e:
-        logger.error(f"MongoDB save error: {e}")
-        return False
+    result = file_store_collection.update_one(
+        {"payload": payload},
+        {"$set": {"file_id": file_id, "file_name": file_name}},
+        upsert=True
+    )
+    logger.info(f"Saved: payload={payload}, file_id={file_id}, name={file_name}")
 
 def get_file_info(payload):
     doc = file_store_collection.find_one({"payload": payload})
@@ -94,7 +82,6 @@ def get_file_info(payload):
         return {"file_id": doc["file_id"], "file_name": doc["file_name"]}
     return None
 
-# ---------- Block helpers ----------
 def is_user_blocked(user_id: int) -> bool:
     return blocked_collection.find_one({"user_id": user_id}) is not None
 
@@ -125,12 +112,12 @@ def reset_attempts(user_id: int):
 # ---------- Telegram Config ----------
 TOKEN = os.environ.get("TELEGRAM_TOKEN")
 if not TOKEN:
-    logger.error("TELEGRAM_TOKEN environment variable not set!")
+    logger.error("TELEGRAM_TOKEN not set")
     sys.exit(1)
 
 BOT_USERNAME = os.environ.get("BOT_USERNAME")
 if not BOT_USERNAME:
-    logger.warning("BOT_USERNAME environment variable not set! Deep links will not work properly.")
+    logger.error("BOT_USERNAME not set! Deep links will not work.")
 
 ADMIN_IDS = [int(id.strip()) for id in os.environ.get("ADMIN_ID", "").split(",") if id.strip()] if os.environ.get("ADMIN_ID") else []
 
@@ -141,7 +128,7 @@ REQUIRED_CHANNELS = [
     {"id": "-1003785717514", "name": "🎵 မြန်မာသီချင်းချန်နယ်", "invite": "https://t.me/wznmusiclibary"}
 ]
 
-POST_CHANNELS = []  # လိုအပ်ပါက ထည့်ပါ
+POST_CHANNELS = []
 OTHER_CHANNELS = []
 MUSIC_CHANNEL_LINK = ""
 
@@ -211,7 +198,7 @@ def normalize_movie_name(text):
     if contains_burmese(text):
         try:
             english = translator_my_to_en.translate(text)
-            logger.info(f"Translated Burmese '{text}' -> '{english}'")
+            logger.info(f"Translated '{text}' -> '{english}'")
             return english.strip()
         except Exception as e:
             logger.error(f"Translation failed: {e}")
@@ -393,51 +380,43 @@ async def createpost_receive_movie_name(update: Update, context: ContextTypes.DE
 async def createpost_receive_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
     video = None
     file_name = None
-
-    # Detect video from message
+    
+    # Video as VIDEO
     if update.message.video:
         video = update.message.video
-        file_name = video.file_name or f"movie_{video.file_id[:8]}"
-        logger.info(f"Video received: file_id={video.file_id}, name={file_name}")
+        file_name = video.file_name or f"movie_{video.file_unique_id}"
+        logger.info(f"Received VIDEO: id={video.file_id}, name={file_name}")
+    # Video as DOCUMENT
     elif update.message.document:
         doc = update.message.document
         mime = doc.mime_type or ''
-        if mime.startswith('video/') or (doc.file_name and doc.file_name.lower().endswith(('.mp4', '.mkv', '.avi', '.mov', '.webm'))):
+        if mime.startswith('video/') or doc.file_name.lower().endswith(('.mp4', '.mkv', '.avi', '.mov', '.webm')):
             video = doc
-            file_name = doc.file_name or f"movie_{doc.file_id[:8]}"
-            logger.info(f"Document video received: file_id={doc.file_id}, name={file_name}, mime={mime}")
+            file_name = doc.file_name or f"movie_{doc.file_unique_id}"
+            logger.info(f"Received DOCUMENT video: id={doc.file_id}, name={file_name}, mime={mime}")
         else:
-            logger.warning(f"Non-video document ignored: mime={mime}, name={doc.file_name}")
+            await update.message.reply_text("❌ ကျေးဇူးပြု၍ Video ဖိုင် (mp4, mkv, avi, mov, webm) သာ ပို့ပေးပါ။")
+            return CREATE_VIDEO
     
     if not video:
-        await update.message.reply_text(
-            "❌ **Video ဖိုင်တစ်ခုသာ ပို့ပေးပါ။**\n\n"
-            "သင်ပို့သောဖိုင်သည် video format (mp4, mkv, avi, mov, webm) ဖြစ်ရပါမည်။\n"
-            "Telegram ၏ **Video** အဖြစ် (သို့) **Document** အဖြစ် ပို့နိုင်ပါသည်။",
-            parse_mode="Markdown"
-        )
+        await update.message.reply_text("❌ Video ဖိုင် (mp4, mkv, avi, mov, webm) တစ်ခု ပို့ပေးပါ။")
         return CREATE_VIDEO
-
-    if not BOT_USERNAME:
-        await update.message.reply_text("❌ BOT_USERNAME environment variable မသတ်မှတ်ထားပါ။ Admin ကို ဆက်သွယ်ပါ။")
-        return ConversationHandler.END
-
-    payload = generate_payload()
-    if not file_name:
-        file_name = f"movie_{payload[:8]}"
     
-    # Save to MongoDB
-    if not save_file_info(payload, video.file_id, file_name):
-        await update.message.reply_text("❌ ဒေတာသိမ်းဆည်းရာတွင် အမှားရှိသည်။ ကျေးဇူးပြု၍ ထပ်စမ်းပါ။")
-        return CREATE_VIDEO
-
+    if not BOT_USERNAME:
+        await update.message.reply_text("❌ BOT_USERNAME မသတ်မှတ်ထားပါ။ Admin ကို ဆက်သွယ်ပါ။")
+        return ConversationHandler.END
+    
+    payload = generate_payload()
+    save_file_info(payload, video.file_id, file_name)
     deep_link = create_deep_linked_url(BOT_USERNAME, payload)
+    logger.info(f"Deep link created: {deep_link}")
+    
     poster = context.user_data.get('createpost_poster')
     movie = context.user_data.get('createpost_movie_data')
     if not movie:
         await update.message.reply_text("❌ ဇာတ်ကားအချက်အလက် ပျောက်နေသည်။ /createpost ဖြင့် ထပ်မံစတင်ပါ။")
         return ConversationHandler.END
-
+    
     formatted_info = format_movie_info_burmese(movie)
     keyboard = []
     keyboard.append([InlineKeyboardButton("🎬 ဇာတ်ကားရယူရန်", url=deep_link)])
@@ -447,9 +426,9 @@ async def createpost_receive_video(update: Update, context: ContextTypes.DEFAULT
             keyboard.append([InlineKeyboardButton("📖 ဇာတ်ညွှန်းအပြည့်ဖတ်ရန်", url=telegraph_url)])
     for ch in REQUIRED_CHANNELS:
         keyboard.append([InlineKeyboardButton(ch['name'], url=ch['invite'])])
-
+    
     reply_markup = InlineKeyboardMarkup(keyboard)
-
+    
     await update.message.reply_photo(
         photo=poster,
         caption=formatted_info,
@@ -493,69 +472,34 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         file_id = file_info["file_id"]
         file_name = file_info["file_name"]
-        
         if not file_id:
             await update.message.reply_text("❌ ဖိုင် ID မှားယွင်းနေပါသည်။ Admin ကို ဆက်သွယ်ပါ။")
             return
-        
         try:
             await update.message.reply_text(f"🎬 {file_name} ပို့ပေးနေပါပြီ...")
-            video_msg = None
-            for attempt in range(3):
-                try:
-                    video_msg = await context.bot.send_video(
-                        chat_id=user_id,
-                        video=file_id,
-                        caption=f"🎬 {file_name}",
-                        timeout=60
-                    )
-                    break
-                except RetryAfter as e:
-                    wait = e.retry_after
-                    await update.message.reply_text(f"⏳ ဆာဗာက အလုပ်များနေလို့ {wait} စက္ကန့် စောင့်ပါ။")
-                    await asyncio.sleep(wait)
-                except Exception as e:
-                    logger.error(f"Attempt {attempt+1} failed: {e}")
-                    if attempt == 2:
-                        raise
-                    await asyncio.sleep(2)
-            if not video_msg:
-                raise Exception("No video message after retries")
-            
+            video_msg = await context.bot.send_video(chat_id=user_id, video=file_id, caption=f"🎬 {file_name}", timeout=60)
             warning_text = "⚠️ ဤဖိုင်ကို 5 မိနစ်အတွင်း ဖျက်ပါမည်။ Saved Messages သို့ Forward လုပ်ပြီး သိမ်းဆည်းပါ။"
             warn_msg = await context.bot.send_message(chat_id=user_id, text=warning_text)
-            
             async def safe_delete():
                 await asyncio.sleep(300)
                 try:
                     await context.bot.delete_message(chat_id=user_id, message_id=warn_msg.message_id)
                     await context.bot.delete_message(chat_id=user_id, message_id=video_msg.message_id)
-                except Exception as del_err:
-                    logger.warning(f"Delete error: {del_err}")
+                except Exception as e:
+                    logger.warning(f"Delete error: {e}")
             asyncio.create_task(safe_delete())
             add_user(user_id)
             increment_requests()
             reset_attempts(user_id)
-        except RetryAfter as e:
-            await update.message.reply_text(f"⏳ ဆာဗာအလုပ်များနေပါသည်။ {e.retry_after} စက္ကန့်ကြာပြီးမှ ထပ်စမ်းပါ။")
         except Exception as e:
-            logger.exception(f"Start video send error: {e}")
-            await update.message.reply_text(
-                "❌ ဗီဒီယိုဖိုင် ပို့ရာတွင် အဆင်မပြေမှုရှိပါသည်။\n"
-                "ဖိုင်သက်တမ်းကုန်သွားခြင်း သို့မဟုတ် Telegram ဆာဗာ အလုပ်များနေခြင်းဖြစ်နိုင်ပါသည်။\n"
-                "မိနစ်အနည်းငယ်ကြာမှ ထပ်စမ်းပါ။"
-            )
+            logger.exception(f"Start send error: {e}")
+            await update.message.reply_text(f"❌ Video ပို့ရာတွင် အမှား: {str(e)}")
     else:
         if is_admin(user_id):
             await show_menu(update, context)
         else:
             await update.message.reply_text(
-                "🎬 **မင်္ဂလာပါ**\n\n"
-                "ဤ Bot သည် Channel များအတွက် ဇာတ်ကားများ ဖြန့်ဝေရန် သုံးပါသည်။\n"
-                "ဇာတ်ကားရယူရန် Channel ရှိ Post အောက်က ခလုတ်ကို နှိပ်ပါ။\n"
-                "ပထမဆုံး လိုအပ်သော Channel 4 ခုလုံးကို ဝင်ရောက်ထားရပါမည်။\n\n"
-                "✨ `/movie` command ဖြင့် ဇာတ်ကားအချက်အလက်များ ရှာဖွေနိုင်ပါသည်။\n"
-                "မြန်မာလိုလည်း ရိုက်ထည့်လို့ရပါသည်။",
+                "🎬 **မင်္ဂလာပါ**\n\nဤ Bot သည် Channel များအတွက် ဇာတ်ကားများ ဖြန့်ဝေရန် သုံးပါသည်။\nဇာတ်ကားရယူရန် Channel ရှိ Post အောက်က ခလုတ်ကို နှိပ်ပါ။\nပထမဆုံး လိုအပ်သော Channel 4 ခုလုံးကို ဝင်ရောက်ထားရပါမည်။\n\n✨ `/movie` command ဖြင့် ဇာတ်ကားအချက်အလက်များ ရှာဖွေနိုင်ပါသည်။\nမြန်မာလိုလည်း ရိုက်ထည့်လို့ရပါသည်။",
                 parse_mode="Markdown"
             )
 
@@ -578,8 +522,7 @@ async def show_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    user_id = query.from_user.id
-    if not is_admin(user_id):
+    if not is_admin(query.from_user.id):
         await query.edit_message_text("⛔ သင်သည် Admin မဟုတ်ပါ။")
         return
     data = query.data
@@ -613,7 +556,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.set_bot_data({'maintenance_mode': False})
         await query.edit_message_text("🔊 Bot ပုံမှန်အလုပ်လုပ်ပါပြီ။")
 
-# ---------- Admin Command Implementations ----------
+# ---------- Admin Commands ----------
 async def newfile_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("⛔ Admin အတွက်သာ။")
@@ -624,39 +567,30 @@ async def newfile_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_video_for_newfile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         return
-    if context.user_data.get('waiting_for_newfile'):
-        video = None
-        file_name = None
-        if update.message.video:
-            video = update.message.video
-            file_name = video.file_name or "movie"
-        elif update.message.document:
-            doc = update.message.document
-            mime = doc.mime_type or ''
-            if mime.startswith('video/') or (doc.file_name and doc.file_name.lower().endswith(('.mp4', '.mkv', '.avi', '.mov', '.webm'))):
-                video = doc
-                file_name = doc.file_name or "movie"
-        if video:
-            if not BOT_USERNAME:
-                await update.message.reply_text("❌ BOT_USERNAME environment variable မသတ်မှတ်ထားပါ။")
-                context.user_data.pop('waiting_for_newfile', None)
-                return
-            payload = generate_payload()
-            if not file_name:
-                file_name = f"movie_{payload[:8]}"
-            if save_file_info(payload, video.file_id, file_name):
-                deep_link = create_deep_linked_url(BOT_USERNAME, payload)
-                await update.message.reply_text(
-                    f"🔗 **Deep Link**\n\n{deep_link}\n\n"
-                    f"`{file_name}` အတွက်ဖြစ်ပါသည်။\n"
-                    f"(Channel 4 ခုလုံးဝင်ထားရန် လိုအပ်)",
-                    parse_mode='Markdown'
-                )
-            else:
-                await update.message.reply_text("❌ ဒေတာသိမ်းဆည်းရာတွင် အမှား။ ထပ်စမ်းပါ။")
-        else:
-            await update.message.reply_text("❌ Video ဖိုင် (MP4/MKV/AVI/MOV) တစ်ခု ပို့ပေးပါ။")
+    if not context.user_data.get('waiting_for_newfile'):
+        return
+    video = None
+    if update.message.video:
+        video = update.message.video
+        file_name = video.file_name or "movie"
+    elif update.message.document:
+        doc = update.message.document
+        mime = doc.mime_type or ''
+        if mime.startswith('video/') or doc.file_name.lower().endswith(('.mp4', '.mkv', '.avi', '.mov', '.webm')):
+            video = doc
+            file_name = doc.file_name or "movie"
+    if not video:
+        await update.message.reply_text("❌ Video ဖိုင် (MP4/MKV/AVI/MOV) တစ်ခု ပို့ပေးပါ။")
+        return
+    if not BOT_USERNAME:
+        await update.message.reply_text("❌ BOT_USERNAME မသတ်မှတ်ထားပါ။")
         context.user_data.pop('waiting_for_newfile', None)
+        return
+    payload = generate_payload()
+    save_file_info(payload, video.file_id, file_name)
+    deep_link = create_deep_linked_url(BOT_USERNAME, payload)
+    await update.message.reply_text(f"🔗 **Deep Link**\n\n{deep_link}\n\n`{file_name}` အတွက်ဖြစ်ပါသည်။\n(Channel 4 ခုလုံးဝင်ထားရန် လိုအပ်)", parse_mode='Markdown')
+    context.user_data.pop('waiting_for_newfile', None)
 
 async def link_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await newfile_command(update, context)
@@ -666,7 +600,7 @@ async def batchlink_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⛔ Admin အတွက်သာ။")
         return
     context.user_data['batch_videos'] = []
-    await update.message.reply_text("📦 **Batch Deep Link Generator**\n\nVideo ဖိုင်များကို တစ်ခုချင်းစီ ဆက်တိုက်ပို့ပါ။ ပြီးပါက `/done` ရိုက်ပါ။ ဖျက်ရန် `/cancel` ရိုက်ပါ။")
+    await update.message.reply_text("📦 **Batch Deep Link Generator**\n\nVideo ဖိုင်များကို တစ်ခုချင်းစီ ဆက်တိုက်ပို့ပါ။ ပြီးပါက `/done` ရိုက်ပါ။")
 
 async def batchlink_receive_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
@@ -675,14 +609,13 @@ async def batchlink_receive_video(update: Update, context: ContextTypes.DEFAULT_
         await update.message.reply_text("/batchlink ဖြင့် စတင်ပါ။")
         return
     video = None
-    file_name = None
     if update.message.video:
         video = update.message.video
         file_name = video.file_name or "movie"
     elif update.message.document:
         doc = update.message.document
         mime = doc.mime_type or ''
-        if mime.startswith('video/') or (doc.file_name and doc.file_name.lower().endswith(('.mp4', '.mkv', '.avi', '.mov', '.webm'))):
+        if mime.startswith('video/') or doc.file_name.lower().endswith(('.mp4', '.mkv', '.avi', '.mov', '.webm')):
             video = doc
             file_name = doc.file_name or "movie"
     if not video:
@@ -696,7 +629,7 @@ async def batchlink_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     videos = context.user_data.get('batch_videos', [])
     if not videos:
-        await update.message.reply_text("❌ Video များမရှိပါ။ /batchlink ဖြင့် ထပ်စတင်ပါ။")
+        await update.message.reply_text("❌ Video များမရှိပါ။")
         return
     if not BOT_USERNAME:
         await update.message.reply_text("❌ BOT_USERNAME မသတ်မှတ်ထားပါ။")
@@ -704,11 +637,9 @@ async def batchlink_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
     results = []
     for v in videos:
         payload = generate_payload()
-        if save_file_info(payload, v["file_id"], v["file_name"]):
-            deep_link = create_deep_linked_url(BOT_USERNAME, payload)
-            results.append(f"• **{v['file_name']}**\n  {deep_link}")
-        else:
-            results.append(f"• **{v['file_name']}**\n  (MongoDB save failed)")
+        save_file_info(payload, v["file_id"], v["file_name"])
+        deep_link = create_deep_linked_url(BOT_USERNAME, payload)
+        results.append(f"• **{v['file_name']}**\n  {deep_link}")
     text = "📦 **Batch Deep Links**\n\n" + "\n\n".join(results)
     if len(text) > 4000:
         text = text[:4000] + "\n...(စာရင်းတိုသွားပါသည်)"
@@ -721,9 +652,7 @@ async def cancel_batchlink(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 batchlink_handler = ConversationHandler(
     entry_points=[CommandHandler('batchlink', batchlink_start)],
-    states={
-        0: [MessageHandler(filters.VIDEO | filters.Document.ALL, batchlink_receive_video)],
-    },
+    states={0: [MessageHandler(filters.VIDEO | filters.Document.ALL, batchlink_receive_video)]},
     fallbacks=[CommandHandler('done', batchlink_done), CommandHandler('cancel', cancel_batchlink)],
 )
 
@@ -746,16 +675,13 @@ async def channelpost_receive_photo(update: Update, context: ContextTypes.DEFAUL
 
 async def channelpost_receive_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
     video = None
-    file_name = None
     if update.message.video:
         video = update.message.video
-        file_name = video.file_name or "movie"
     elif update.message.document:
         doc = update.message.document
         mime = doc.mime_type or ''
-        if mime.startswith('video/') or (doc.file_name and doc.file_name.lower().endswith(('.mp4', '.mkv', '.avi', '.mov', '.webm'))):
+        if mime.startswith('video/') or doc.file_name.lower().endswith(('.mp4', '.mkv', '.avi', '.mov', '.webm')):
             video = doc
-            file_name = doc.file_name or "movie"
     if not video:
         await update.message.reply_text("Video ဖိုင်တစ်ခု ပို့ပေးပါ။")
         return 1
@@ -763,11 +689,8 @@ async def channelpost_receive_video(update: Update, context: ContextTypes.DEFAUL
         await update.message.reply_text("❌ BOT_USERNAME မသတ်မှတ်ထားပါ။")
         return ConversationHandler.END
     payload = generate_payload()
-    if not file_name:
-        file_name = f"movie_{payload[:8]}"
-    if not save_file_info(payload, video.file_id, file_name):
-        await update.message.reply_text("❌ ဒေတာသိမ်းဆည်းရာတွင် အမှား။")
-        return 1
+    file_name = getattr(video, 'file_name', None) or "movie"
+    save_file_info(payload, video.file_id, file_name)
     deep_link = create_deep_linked_url(BOT_USERNAME, payload)
     button = InlineKeyboardButton("🎬 ဇာတ်ကားရယူရန်", url=deep_link)
     reply_markup = InlineKeyboardMarkup([[button]])
@@ -787,60 +710,19 @@ async def channelpost_receive_video(update: Update, context: ContextTypes.DEFAUL
 
 channelpost_handler = ConversationHandler(
     entry_points=[CommandHandler('channelpost', channelpost_start)],
-    states={
-        0: [MessageHandler(filters.PHOTO, channelpost_receive_photo)],
-        1: [MessageHandler(filters.VIDEO | filters.Document.ALL, channelpost_receive_video)],
-    },
+    states={0: [MessageHandler(filters.PHOTO, channelpost_receive_photo)], 1: [MessageHandler(filters.VIDEO | filters.Document.ALL, channelpost_receive_video)]},
     fallbacks=[CommandHandler('cancel', lambda u,c: u.message.reply_text("လုပ်ဆောင်ချက် ပယ်ဖျက်ပြီးပါပြီ။"))],
 )
 
 async def convert_old(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         return
-    limit = context.args[0] if context.args else None
-    try:
-        limit = int(limit) if limit else None
-    except:
-        await update.message.reply_text("နံပါတ်တစ်ခုသာ ထည့်ပါ။ /convert_old 500")
-        return
-    if not os.path.exists('old_posts.json'):
-        await update.message.reply_text("old_posts.json ဖိုင်မရှိပါ။")
-        return
-    with open('old_posts.json', 'r', encoding='utf-8') as f:
-        posts = json.load(f)
-    if limit:
-        posts = posts[:limit]
-    if not BOT_USERNAME:
-        await update.message.reply_text("❌ BOT_USERNAME မသတ်မှတ်ထားပါ။")
-        return
-    success = 0
-    for post in posts:
-        try:
-            file_id = post.get('file_id')
-            photo_id = post.get('photo_id')
-            caption = post.get('caption', '')
-            channel_id = int(post.get('channel')) if isinstance(post.get('channel'), str) else post.get('channel')
-            if not file_id or not channel_id:
-                continue
-            payload = generate_payload()
-            save_file_info(payload, file_id, f"movie_{post.get('message_id')}")
-            deep_link = create_deep_linked_url(BOT_USERNAME, payload)
-            button = InlineKeyboardButton("🎬 ဇာတ်ကားရယူရန်", url=deep_link)
-            reply_markup = InlineKeyboardMarkup([[button]])
-            if photo_id:
-                await context.bot.send_photo(chat_id=channel_id, photo=photo_id, caption=caption[:1024], reply_markup=reply_markup)
-            else:
-                await context.bot.send_message(chat_id=channel_id, text=f"{caption}\n\n👇 ဇာတ်ကားရယူရန် အောက်ပါခလုတ်ကို နှိပ်ပါ။", reply_markup=reply_markup)
-            success += 1
-            await asyncio.sleep(0.5)
-        except Exception as e:
-            logger.error(f"Convert error: {e}")
-    await update.message.reply_text(f"✅ ပြောင်းလဲခြင်း ပြီးဆုံးပါပြီ။ အောင်မြင်သည်: {success}/{len(posts)}")
+    await update.message.reply_text("လုပ်ဆောင်ချက်ကို ထည့်သွင်းမထားသေးပါ။")
 
 async def test_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         return
-    await update.message.reply_text("Channel ID (နံပါတ်) ပို့ပါ။ ဥပမာ -1001234567890")
+    await update.message.reply_text("Channel ID (နံပါတ်) ပို့ပါ။")
     context.user_data['test_channel'] = True
 
 async def test_channel_receive(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -849,8 +731,8 @@ async def test_channel_receive(update: Update, context: ContextTypes.DEFAULT_TYP
             cid = int(update.message.text.strip())
             await context.bot.send_message(chat_id=cid, text="✅ စမ်းသပ်မက်ဆေ့ချ် အောင်မြင်ပါသည်။")
             await update.message.reply_text(f"✅ Channel {cid} သို့ မက်ဆေ့ချ်ပို့နိုင်ပါသည်။")
-        except:
-            await update.message.reply_text("❌ မအောင်မြင်ပါ။ Bot သည် Channel တွင် Admin ဖြစ်မဖြစ် စစ်ဆေးပါ။")
+        except Exception as e:
+            await update.message.reply_text(f"❌ မအောင်မြင်ပါ။ Error: {e}")
         context.user_data.pop('test_channel', None)
 
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -921,12 +803,12 @@ async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     await show_menu(update, context)
 
-# Placeholders (not implemented)
-async def schedule(update, context): await update.message.reply_text("⏳ အချိန်ဇယား - လုပ်ဆောင်ဆဲ။")
-async def listschedule(update, context): await update.message.reply_text("📋 အချိန်ဇယားစာရင်း - လုပ်ဆောင်ဆဲ။")
-async def cancelschedule(update, context): await update.message.reply_text("❌ အချိန်ဇယားဖျက်ရန် - လုပ်ဆောင်ဆဲ။")
-async def delete_file(update, context): await update.message.reply_text("🗑️ ဖိုင်ဖျက်ရန် - လုပ်ဆောင်ဆဲ။")
-async def deleteall(update, context): await update.message.reply_text("⚠️ အားလုံးဖျက်ရန် - လုပ်ဆောင်ဆဲ။")
+# Placeholders
+async def schedule(update, context): await update.message.reply_text("⏳ လုပ်ဆောင်ဆဲ။")
+async def listschedule(update, context): await update.message.reply_text("📋 လုပ်ဆောင်ဆဲ။")
+async def cancelschedule(update, context): await update.message.reply_text("❌ လုပ်ဆောင်ဆဲ။")
+async def delete_file(update, context): await update.message.reply_text("🗑️ လုပ်ဆောင်ဆဲ။")
+async def deleteall(update, context): await update.message.reply_text("⚠️ လုပ်ဆောင်ဆဲ။")
 
 # ---------- Application Setup ----------
 application = Application.builder().token(TOKEN).build()
@@ -966,13 +848,12 @@ application.add_handler(CommandHandler("delete", delete_file))
 application.add_handler(CommandHandler("deleteall", deleteall))
 application.add_handler(CallbackQueryHandler(menu_callback, pattern="menu_"))
 
-# ---------- Polling ----------
 def run_bot():
     while True:
         try:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
-            logger.info("Starting bot polling...")
+            logger.info("Bot started polling...")
             application.run_polling()
         except Exception as e:
             logger.exception(f"Bot crashed: {e}. Restarting in 10s")
