@@ -1,5 +1,6 @@
 import os
 import asyncio
+import threading
 import logging
 import sys
 import secrets
@@ -93,6 +94,7 @@ if not TOKEN:
 BOT_USERNAME = os.environ.get("BOT_USERNAME")
 if not BOT_USERNAME:
     logger.error("BOT_USERNAME not set! Deep links will not work.")
+    sys.exit(1)
 
 ADMIN_IDS = [int(x.strip()) for x in os.environ.get("ADMIN_ID", "").split(",") if x.strip()]
 
@@ -126,7 +128,7 @@ async def check_all_channels(user_id, bot):
 # ---------- Telegraph ----------
 telegraph = Telegraph()
 try:
-    telegraph.create_account(short_name=BOT_USERNAME or 'FileShareBot')
+    telegraph.create_account(short_name=BOT_USERNAME)
 except:
     pass
 
@@ -233,13 +235,13 @@ def format_movie_info_plain(movie):
 # ========== /movie ==========
 async def movie_command(update, context):
     if not context.args:
-        await update.message.reply_text("ဥပမာ - /movie Inception 2010 သို့မဟုတ် အင်စက်ပရှင်")
+        await update.message.reply_text("ဥပမာ - /movie Inception 2010")
         return
     movie_input = ' '.join(context.args)
     msg = await update.message.reply_text(f"🔍 '{movie_input}' ကို ရှာဖွေနေပါသည်...")
     movie = get_movie_info(movie_input)
     if not movie:
-        await msg.edit_text("❌ ရှာမတွေ့ပါ။ အင်္ဂလိပ်အမည် (သို့) မြန်မာအမည်ဖြင့် ထပ်စမ်းပါ။")
+        await msg.edit_text("❌ ရှာမတွေ့ပါ။")
         return
     text = format_movie_info_plain(movie)
     keyboard = []
@@ -247,7 +249,7 @@ async def movie_command(update, context):
         url = await create_telegraph_page_movie(f"{movie['title']} ({movie['year']})", movie['plot'])
         if url:
             keyboard.append([InlineKeyboardButton("📖 ဇာတ်ညွှန်းအပြည့်", url=url)])
-    await msg.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard) if keyboard else None, disable_web_page_preview=True)
+    await msg.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard) if keyboard else None)
 
 # ========== /createpost ==========
 CREATE_STATES = {}
@@ -257,12 +259,12 @@ async def createpost_command(update, context):
         await update.message.reply_text("⛔ Admin အတွက်သာ။")
         return
     if not context.args:
-        await update.message.reply_text("အသုံးပြုပုံ: /createpost ဇာတ်ကားအမည် ထုတ်ဝေနှစ်\nဥပမာ - /createpost Inception 2010")
+        await update.message.reply_text("အသုံးပြုပုံ: /createpost ဇာတ်ကားအမည် (နှစ်)\nဥပမာ - /createpost Inception 2010")
         return
     movie_input = ' '.join(context.args)
     movie = get_movie_info(movie_input)
     if not movie:
-        await update.message.reply_text("❌ ဇာတ်ကား ရှာမတွေ့ပါ။ အင်္ဂလိပ်အမည်အပြည့် ထည့်ပါ။")
+        await update.message.reply_text("❌ ဇာတ်ကား ရှာမတွေ့ပါ။")
         return
     user_id = update.effective_user.id
     CREATE_STATES[user_id] = {'movie': movie, 'step': 'waiting_poster'}
@@ -273,7 +275,7 @@ async def handle_poster(update, context):
     if user_id not in CREATE_STATES or CREATE_STATES[user_id]['step'] != 'waiting_poster':
         return
     if not update.message.photo:
-        await update.message.reply_text("ကျေးဇူးပြု၍ Poster ပုံတစ်ပုံ ပို့ပေးပါ။")
+        await update.message.reply_text("Poster ပုံတစ်ပုံ ပို့ပေးပါ။")
         return
     CREATE_STATES[user_id]['poster'] = update.message.photo[-1].file_id
     CREATE_STATES[user_id]['step'] = 'waiting_video'
@@ -294,10 +296,7 @@ async def handle_video_for_create(update, context):
             video = doc
             file_name = doc.file_name or "movie"
     if not video:
-        await update.message.reply_text("❌ Video ဖိုင် (mp4, mkv, avi, mov) တစ်ခု ပို့ပေးပါ။")
-        return
-    if not BOT_USERNAME:
-        await update.message.reply_text("❌ BOT_USERNAME မသတ်မှတ်ထားပါ။")
+        await update.message.reply_text("❌ Video ဖိုင် (mp4, mkv, avi, mov) ပို့ပါ။")
         return
     payload = generate_payload()
     save_file_info(payload, video.file_id, file_name)
@@ -340,16 +339,12 @@ async def newfile_receive(update, context):
             video = doc
             file_name = doc.file_name or "video"
     if not video:
-        await update.message.reply_text("❌ Video ဖိုင်တစ်ခု ပို့ပေးပါ။")
-        return
-    if not BOT_USERNAME:
-        await update.message.reply_text("❌ BOT_USERNAME မသတ်မှတ်ထားပါ။")
-        context.user_data.pop('newfile_waiting', None)
+        await update.message.reply_text("Video ဖိုင်တစ်ခု ပို့ပါ။")
         return
     payload = generate_payload()
     save_file_info(payload, video.file_id, file_name)
     deep_link = create_deep_linked_url(BOT_USERNAME, payload)
-    await update.message.reply_text(f"🔗 **Deep Link**\n\n{deep_link}\n\n`{file_name}` အတွက်ဖြစ်ပါသည်။\n(Channel 4 ခုလုံးဝင်ထားရန် လိုအပ်)", parse_mode='Markdown')
+    await update.message.reply_text(f"🔗 **Deep Link**\n\n{deep_link}\n\n`{file_name}`")
     context.user_data.pop('newfile_waiting', None)
 
 # ========== /batchlink ==========
@@ -358,155 +353,135 @@ async def batchlink_start(update, context):
         await update.message.reply_text("⛔ Admin အတွက်သာ။")
         return
     context.user_data['batch_videos'] = []
-    await update.message.reply_text("📦 **Batch Deep Link Generator**\n\nVideo ဖိုင်များကို တစ်ခုချင်းစီ ဆက်တိုက်ပို့ပါ။ ပြီးပါက `/done` ရိုက်ပါ။")
+    await update.message.reply_text("📦 Batch Link Generator\nVideo များ ဆက်တိုက်ပို့ပါ။ ပြီးပါက /done")
 
-async def batchlink_receive_video(update, context):
+async def batchlink_receive(update, context):
     if not is_admin(update.effective_user.id):
         return
     if 'batch_videos' not in context.user_data:
-        await update.message.reply_text("/batchlink ဖြင့် စတင်ပါ။")
         return
     video = None
-    file_name = None
+    name = None
     if update.message.video:
         video = update.message.video
-        file_name = video.file_name or "movie"
+        name = video.file_name or "video"
     elif update.message.document:
         doc = update.message.document
         if doc.mime_type and doc.mime_type.startswith('video/'):
             video = doc
-            file_name = doc.file_name or "movie"
+            name = doc.file_name or "video"
     if not video:
-        await update.message.reply_text("Video ဖိုင်တစ်ခု ပို့ပေးပါ။")
+        await update.message.reply_text("Video ဖိုင်ပို့ပါ။")
         return
-    context.user_data['batch_videos'].append({"file_id": video.file_id, "file_name": file_name})
-    await update.message.reply_text(f"✅ ဖိုင် #{len(context.user_data['batch_videos'])}: `{file_name}` လက်ခံပြီး။\n(ဆက်ပို့ရန် သို့မဟုတ် `/done`)", parse_mode='Markdown')
+    context.user_data['batch_videos'].append({"file_id": video.file_id, "name": name})
+    await update.message.reply_text(f"✅ #{len(context.user_data['batch_videos'])}: {name}")
 
 async def batchlink_done(update, context):
     if not is_admin(update.effective_user.id):
         return
     videos = context.user_data.get('batch_videos', [])
     if not videos:
-        await update.message.reply_text("❌ Video များမရှိပါ။")
-        return
-    if not BOT_USERNAME:
-        await update.message.reply_text("❌ BOT_USERNAME မသတ်မှတ်ထားပါ။")
+        await update.message.reply_text("ဗီဒီယိုမရှိပါ။")
         return
     results = []
     for v in videos:
         payload = generate_payload()
-        save_file_info(payload, v["file_id"], v["file_name"])
-        deep_link = create_deep_linked_url(BOT_USERNAME, payload)
-        results.append(f"• **{v['file_name']}**\n  {deep_link}")
-    text = "📦 **Batch Deep Links**\n\n" + "\n\n".join(results)
+        save_file_info(payload, v["file_id"], v["name"])
+        link = create_deep_linked_url(BOT_USERNAME, payload)
+        results.append(f"• {v['name']}\n  {link}")
+    text = "Batch Links:\n" + "\n".join(results)
     if len(text) > 4000:
-        text = text[:4000] + "\n..."
-    await update.message.reply_text(text, parse_mode='Markdown', disable_web_page_preview=True)
+        text = text[:4000] + "..."
+    await update.message.reply_text(text)
     context.user_data.clear()
 
-async def cancel_batchlink(update, context):
+async def cancel_batch(update, context):
     context.user_data.clear()
-    await update.message.reply_text("လုပ်ဆောင်ချက် ပယ်ဖျက်ပြီးပါပြီ။")
+    await update.message.reply_text("Cancelled.")
 
 # ========== /start ==========
 async def start(update, context):
     user_id = update.effective_user.id
     if context.args:
         payload = context.args[0]
-        file_info = get_file_info(payload)
-        if not file_info:
-            await update.message.reply_text("❌ ဤလင့်သည် မမှန်ကန်ပါ သို့မဟုတ် သက်တမ်းကုန်သွားပါပြီ။")
+        info = get_file_info(payload)
+        if not info:
+            await update.message.reply_text("လင့်မမှန်ပါ။")
             return
         if is_user_blocked(user_id):
-            await update.message.reply_text("🔒 သင်သည် block ခံထားရပါသည်။")
+            await update.message.reply_text("သင်ပိတ်ခံထားရသည်။")
             return
-        ok, missing = await check_all_channels(user_id, context.bot)
+        ok, _ = await check_all_channels(user_id, context.bot)
         if not ok:
             attempts = get_attempt_count(user_id) + 1
             increment_attempts(user_id)
             if attempts >= 10:
                 block_user(user_id)
-                await update.message.reply_text("🚫 ၁၀ ကြိမ်အထက် မအောင်မြင်သောကြောင့် block ခံရပါသည်။")
+                await update.message.reply_text("၁၀ကြိမ်ကျော်သောကြောင့်ပိတ်ပါသည်။")
                 return
-            msg = "🎬 ဇာတ်ကားဖိုင်ရယူရန် အောက်ပါ Channel များအားလုံးကို ဝင်ထားပေးပါ။\n"
+            msg = "အောက်ပါ channel များအားလုံးကိုဝင်ပါ:\n"
             for ch in REQUIRED_CHANNELS:
                 msg += f"• {ch['name']}: {ch['invite']}\n"
-            msg += f"\n⚠️ သင်သည် ဤလင့်ကို **{attempts}/10** ကြိမ် နှိပ်ပြီးဖြစ်သည်။"
-            await update.message.reply_text(msg, disable_web_page_preview=True)
+            msg += f"\nအကြိမ်ရေ: {attempts}/10"
+            await update.message.reply_text(msg)
             return
         try:
-            await update.message.reply_text(f"🎬 {file_info['file_name']} ပို့ပေးနေပါပြီ...")
-            await context.bot.send_video(chat_id=user_id, video=file_info['file_id'], caption=f"🎬 {file_info['file_name']}")
+            await update.message.reply_text(f"🎬 {info['file_name']} ပို့နေပါပြီ...")
+            await context.bot.send_video(chat_id=user_id, video=info['file_id'], caption=f"🎬 {info['file_name']}")
             add_user(user_id)
             increment_requests()
             reset_attempts(user_id)
         except Exception as e:
-            await update.message.reply_text(f"❌ Video ပို့ရာတွင် အမှား: {str(e)}")
+            await update.message.reply_text(f"မပို့နိုင်ပါ: {e}")
     else:
         if is_admin(user_id):
             await show_menu(update, context)
         else:
-            await update.message.reply_text(
-                "🎬 **မင်္ဂလာပါ**\n\n"
-                "ဤ Bot သည် Channel များအတွက် ဇာတ်ကားများ ဖြန့်ဝေရန် သုံးပါသည်။\n"
-                "ဇာတ်ကားရယူရန် Channel ရှိ Post အောက်က ခလုတ်ကို နှိပ်ပါ။\n"
-                "ပထမဆုံး လိုအပ်သော Channel 4 ခုလုံးကို ဝင်ရောက်ထားရပါမည်။\n\n"
-                "✨ `/movie` command ဖြင့် ဇာတ်ကားအချက်အလက်များ ရှာဖွေနိုင်ပါသည်။\n"
-                "မြန်မာလိုလည်း ရိုက်ထည့်လို့ရပါသည်။",
-                parse_mode="Markdown"
-            )
+            await update.message.reply_text("🎬 မင်္ဂလာပါ။ ဇာတ်ကားရယူရန် channel post ခလုတ်ကိုနှိပ်ပါ။ /movie ဖြင့်ရှာနိုင်သည်။")
 
 # ---------- Admin Menu ----------
 async def show_menu(update, context):
     keyboard = [
-        [InlineKeyboardButton("➕ Post အသစ်ဖန်တီးရန်", callback_data="menu_createpost")],
-        [InlineKeyboardButton("🔗 Deep Link အသစ်ထုတ်ရန်", callback_data="menu_newfile")],
-        [InlineKeyboardButton("📦 Batch Link (အစုလိုက်)", callback_data="menu_batchlink")],
+        [InlineKeyboardButton("➕ Postအသစ်", callback_data="menu_createpost")],
+        [InlineKeyboardButton("🔗 Deep Linkထုတ်", callback_data="menu_newfile")],
+        [InlineKeyboardButton("📦 Batch Link", callback_data="menu_batch")],
         [InlineKeyboardButton("📊 စာရင်းအင်း", callback_data="menu_stats")],
-        [InlineKeyboardButton("🚫 Block စာရင်း", callback_data="menu_blocklist")],
-        [InlineKeyboardButton("🔇 Bot ပိတ်ရန်", callback_data="menu_mute")],
-        [InlineKeyboardButton("🔊 Bot ဖွင့်ရန်", callback_data="menu_unmute")],
+        [InlineKeyboardButton("🚫 Blockစာရင်း", callback_data="menu_block")],
     ]
-    await update.message.reply_text("🤖 Admin Menu", reply_markup=InlineKeyboardMarkup(keyboard))
+    await update.message.reply_text("Admin Menu", reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def menu_callback(update, context):
     query = update.callback_query
     await query.answer()
     if not is_admin(query.from_user.id):
-        await query.edit_message_text("⛔ Admin မဟုတ်ပါ။")
+        await query.edit_message_text("ခွင့်မပြု")
         return
     data = query.data
     if data == "menu_createpost":
-        await query.edit_message_text("/createpost ဇာတ်ကားအမည် နှစ်")
+        await query.edit_message_text("/createpost MovieName Year")
     elif data == "menu_newfile":
-        await query.edit_message_text("/newfile ပြီးမှ video ဖိုင်ပို့ပါ။")
-    elif data == "menu_batchlink":
-        await query.edit_message_text("/batchlink ပြီးမှ video များဆက်တိုက်ပို့ပါ။")
+        await query.edit_message_text("/newfile ပြီးမှ video")
+    elif data == "menu_batch":
+        await query.edit_message_text("/batchlink")
     elif data == "menu_stats":
         total_users = users_collection.count_documents({})
         total_req = get_total_requests()
-        await query.edit_message_text(f"👥 အသုံးပြုသူ: {total_users}\n🎬 တောင်းဆိုမှု: {total_req}")
-    elif data == "menu_blocklist":
+        await query.edit_message_text(f"👥 {total_users} users\n🎬 {total_req} requests")
+    elif data == "menu_block":
         blocked = get_blocked_users()
-        msg = "Blocked users:\n" + "\n".join(str(uid) for uid in blocked) if blocked else "ဘယ်သူမှမရှိပါ။"
+        msg = "Blocked:\n" + "\n".join(str(uid) for uid in blocked) if blocked else "Empty"
         await query.edit_message_text(msg)
-    elif data == "menu_mute":
-        await context.bot.set_bot_data({'muted': True})
-        await query.edit_message_text("🔇 Bot ကို ယာယီပိတ်ထားပါသည်။")
-    elif data == "menu_unmute":
-        await context.bot.set_bot_data({'muted': False})
-        await query.edit_message_text("🔊 Bot ပုံမှန်အလုပ်လုပ်ပါပြီ။")
 
 async def stats(update, context):
     if is_admin(update.effective_user.id):
         total_users = users_collection.count_documents({})
         total_req = get_total_requests()
-        await update.message.reply_text(f"👥 အသုံးပြုသူ: {total_users}\n🎬 တောင်းဆိုမှု: {total_req}")
+        await update.message.reply_text(f"Users: {total_users}\nRequests: {total_req}")
 
 async def blocklist(update, context):
     if is_admin(update.effective_user.id):
         blocked = get_blocked_users()
-        msg = "Blocked users:\n" + "\n".join(str(uid) for uid in blocked) if blocked else "None"
+        msg = "Blocked:\n" + "\n".join(str(uid) for uid in blocked) if blocked else "None"
         await update.message.reply_text(msg)
 
 async def unblock(update, context):
@@ -519,41 +494,20 @@ async def unblock(update, context):
         uid = int(context.args[0])
         if is_user_blocked(uid):
             unblock_user(uid)
-            await update.message.reply_text(f"✅ User {uid} ကို unblock လုပ်ပြီး။")
+            await update.message.reply_text(f"Unblocked {uid}")
         else:
-            await update.message.reply_text(f"User {uid} သည် block မခံရပါ။")
+            await update.message.reply_text(f"{uid} not blocked")
     except:
-        await update.message.reply_text("User ID ဂဏန်းသာ ထည့်ပါ။")
-
-async def mute(update, context):
-    if is_admin(update.effective_user.id):
-        await context.bot.set_bot_data({'muted': True})
-        await update.message.reply_text("🔇 Bot ကို ယာယီပိတ်ထားပါသည်။")
-
-async def unmute(update, context):
-    if is_admin(update.effective_user.id):
-        await context.bot.set_bot_data({'muted': False})
-        await update.message.reply_text("🔊 Bot ပုံမှန်အလုပ်လုပ်ပါပြီ။")
+        await update.message.reply_text("Invalid ID")
 
 async def menu_command(update, context):
     if is_admin(update.effective_user.id):
         await show_menu(update, context)
-    else:
-        await update.message.reply_text("Admin only")
 
-async def channelpost(update, context): await update.message.reply_text("Not implemented yet")
-async def convert_old(update, context): await update.message.reply_text("Not implemented yet")
-async def test_channel(update, context): await update.message.reply_text("Not implemented yet")
-async def schedule(update, context): await update.message.reply_text("Not implemented yet")
-async def listschedule(update, context): await update.message.reply_text("Not implemented yet")
-async def cancelschedule(update, context): await update.message.reply_text("Not implemented yet")
-async def delete_file(update, context): await update.message.reply_text("Not implemented yet")
-async def deleteall(update, context): await update.message.reply_text("Not implemented yet")
-
-# ---------- Webhook Setup ----------
+# ---------- Webhook ----------
 WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
 if not WEBHOOK_URL:
-    logger.error("WEBHOOK_URL not set. Please set it to https://your-app.onrender.com/webhook")
+    logger.error("WEBHOOK_URL not set")
     sys.exit(1)
 
 application = Application.builder().token(TOKEN).build()
@@ -567,21 +521,11 @@ application.add_handler(CommandHandler("newfile", newfile_command))
 application.add_handler(MessageHandler(filters.VIDEO | filters.Document.ALL, newfile_receive))
 application.add_handler(CommandHandler("batchlink", batchlink_start))
 application.add_handler(CommandHandler("done", batchlink_done))
-application.add_handler(CommandHandler("cancel", cancel_batchlink))
+application.add_handler(CommandHandler("cancel", cancel_batch))
 application.add_handler(CommandHandler("stats", stats))
 application.add_handler(CommandHandler("blocklist", blocklist))
 application.add_handler(CommandHandler("unblock", unblock))
-application.add_handler(CommandHandler("mute", mute))
-application.add_handler(CommandHandler("unmute", unmute))
 application.add_handler(CommandHandler("menu", menu_command))
-application.add_handler(CommandHandler("channelpost", channelpost))
-application.add_handler(CommandHandler("convert_old", convert_old))
-application.add_handler(CommandHandler("test_channel", test_channel))
-application.add_handler(CommandHandler("schedule", schedule))
-application.add_handler(CommandHandler("listschedule", listschedule))
-application.add_handler(CommandHandler("cancelschedule", cancelschedule))
-application.add_handler(CommandHandler("delete", delete_file))
-application.add_handler(CommandHandler("deleteall", deleteall))
 application.add_handler(CallbackQueryHandler(menu_callback, pattern="menu_"))
 
 @app.route('/webhook', methods=['POST'])
