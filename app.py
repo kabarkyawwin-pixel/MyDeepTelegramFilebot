@@ -110,8 +110,10 @@ TOKEN = os.environ.get("TELEGRAM_TOKEN")
 BOT_USERNAME = os.environ.get("BOT_USERNAME")
 ADMIN_IDS = [int(id.strip()) for id in os.environ.get("ADMIN_ID", "").split(",") if id.strip()] if os.environ.get("ADMIN_ID") else []
 
+# Channels to post when using /channelpost
 POST_CHANNELS = [ch.strip() for ch in os.environ.get("POST_CHANNELS", "").split(",") if ch.strip()] if os.environ.get("POST_CHANNELS") else []
 
+# Required Channels (4 channels)
 REQUIRED_CHANNELS = [
     {"id": "-1003753299714", "name": "🎬 Movies channel main (HD Movies များ)", "invite": "https://t.me/wznmoviescollector"},
     {"id": "-1003899625672", "name": "🎬 Movies channel 2 (အရံချန်နယ်)", "invite": "https://t.me/moviesandseriesforallwzn"},
@@ -249,6 +251,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             increment_requests()
             reset_attempts(user_id)
 
+            # Fixed Channel Invite Buttons
             keyboard = []
             keyboard.append([InlineKeyboardButton("🎬 ဇာတ်ကားချန်နယ်", url="https://t.me/moviesandseriesforallwzn")])
             keyboard.append([InlineKeyboardButton("👥 လူကြီးချန်နယ်", url="https://t.me/everyboyhobby")])
@@ -335,7 +338,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "menu_convert_old":
         await query.edit_message_text("🔄 `/convert_old <limit>` ကို သုံးပါ။ (ဥပမာ `/convert_old 500` ဟုရိုက်ပါ)")
 
-# ---------- /newpost ----------
+# ---------- /newpost Command ----------
 POSTER, CAPTION, VIDEO_FILE = range(3)
 
 async def newpost_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -448,7 +451,7 @@ async def cancel_newpost(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
     return ConversationHandler.END
 
-# ---------- /newfile & /link ----------
+# ---------- /newfile Command ----------
 async def newfile_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("⛔ သင်သည် Admin မဟုတ်ပါ။")
@@ -478,6 +481,7 @@ async def handle_video_for_newfile(update: Update, context: ContextTypes.DEFAULT
         else:
             await update.message.reply_text("Video file တစ်ခု ပို့ပေးပါ။")
 
+# ---------- /link Command ----------
 async def link_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("⛔ သင်သည် Admin မဟုတ်ပါ။")
@@ -507,7 +511,7 @@ async def handle_video_for_link(update: Update, context: ContextTypes.DEFAULT_TY
         else:
             await update.message.reply_text("Video file တစ်ခု ပို့ပေးပါ။")
 
-# ---------- /batchlink ----------
+# ---------- /batchlink Command ----------
 BATCHLINK_VIDEO = range(1)
 
 async def batchlink_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -573,7 +577,7 @@ async def cancel_batchlink(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
     return ConversationHandler.END
 
-# ---------- /channelpost ----------
+# ---------- /channelpost Command ----------
 CHANNELPOST_PHOTO, CHANNELPOST_VIDEO = range(2)
 
 async def channelpost_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -679,7 +683,7 @@ async def cancel_channelpost(update: Update, context: ContextTypes.DEFAULT_TYPE)
     context.user_data.clear()
     return ConversationHandler.END
 
-# ---------- /test_channel (Test channel posting) ----------
+# ---------- /test_channel Command ----------
 async def test_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("⛔ သင်သည် Admin မဟုတ်ပါ။")
@@ -700,7 +704,7 @@ async def test_channel_receive_id(update: Update, context: ContextTypes.DEFAULT_
         finally:
             context.user_data.pop('test_channel_mode', None)
 
-# ---------- /convert_old (Fixed) ----------
+# ---------- /convert_old Command (ပြင်ဆင်ပြီး - string to int သေချာပြောင်း) ----------
 async def convert_old(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("⛔ သင်သည် Admin မဟုတ်ပါ။")
@@ -729,10 +733,6 @@ async def convert_old(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     posts = all_posts[:limit] if limit else all_posts
 
-    # Debug: show first post's channel value
-    first_channel = posts[0].get('channel')
-    await update.message.reply_text(f"🔍 Debug: First post channel value = {first_channel} (type: {type(first_channel).__name__})")
-
     await update.message.reply_text(f"📊 {len(posts)} ခုကို စတင်ပြောင်းလဲနေပါပြီ... (ဤအချိန်အနည်းငယ်ကြာနိုင်ပါသည်)")
 
     success = 0
@@ -750,21 +750,15 @@ async def convert_old(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 error_details.append(f"Post {idx}: Missing file_id or channel")
                 continue
 
-            # Convert to integer (works for both string and int)
+            # ========== အဓိက ပြင်ဆင်ချက် ==========
+            # channel ID ကို integer အနေနဲ့ သေချာပြောင်းပါ
             if isinstance(target_channel_raw, str):
-                # Remove any non-numeric characters except minus sign
                 target_channel = int(target_channel_raw)
             else:
                 target_channel = target_channel_raw
+            # =======================================
 
-            # Optional: verify channel exists by getting chat
-            try:
-                await context.bot.get_chat(target_channel)
-            except Exception as e:
-                fail += 1
-                error_details.append(f"Post {idx}: Channel {target_channel} not accessible - {str(e)[:50]}")
-                continue
-
+            # Generate Deep Link
             payload = generate_payload()
             file_name = f"movie_{post.get('message_id', idx)}"
             save_file_info(payload, file_id, file_name)
