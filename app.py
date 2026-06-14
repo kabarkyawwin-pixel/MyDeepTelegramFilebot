@@ -128,7 +128,7 @@ REQUIRED_CHANNELS = [
     {"id": "-1003785717514", "name": "🎵 မြန်မာသီချင်းချန်နယ်", "invite": "https://t.me/wznmusiclibary"}
 ]
 
-POST_CHANNELS = []
+POST_CHANNELS = []   # Admin က သတ်မှတ်ရန် (ဥပမာ: ["-100xxxxxx"])
 OTHER_CHANNELS = []
 MUSIC_CHANNEL_LINK = ""
 
@@ -323,7 +323,7 @@ async def movie_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
     await msg.edit_text(formatted, parse_mode='Markdown', reply_markup=reply_markup, disable_web_page_preview=True)
 
-# ========== /createpost Conversation ==========
+# ========== /createpost Conversation (FIXED) ==========
 CREATE_POSTER, CREATE_MOVIE_NAME, CREATE_VIDEO = range(3)
 
 async def createpost_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -377,25 +377,24 @@ async def createpost_receive_movie_name(update: Update, context: ContextTypes.DE
     await update.message.reply_text("🎬 ယခု ဇာတ်ကား Video ဖိုင်ကို ပို့ပေးပါ။")
     return CREATE_VIDEO
 
-# ========== FIXED VIDEO RECEIVER - This is the only part changed ==========
 async def createpost_receive_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """ပို့လိုက်သော video ကို မှန်ကန်စွာ detect လုပ်ပြီး deep link ထုတ်ပေးသည်"""
+    """FIXED: ပို့လိုက်သော video ကို မှန်ကန်စွာ detect လုပ်ပြီး deep link ထုတ်ပေးသည်"""
     video = None
     file_name = None
     
-    # Video as native video
+    # Case 1: Native video
     if update.message.video:
         video = update.message.video
         file_name = video.file_name or f"movie_{video.file_id[:8]}"
-        logger.info(f"✅ Video received (native): {video.file_id}")
-    # Video as document
+        logger.info(f"✅ createpost: native video received: {video.file_id}")
+    # Case 2: Document (video file)
     elif update.message.document:
         doc = update.message.document
         mime = doc.mime_type or ''
         if mime.startswith('video/') or (doc.file_name and doc.file_name.lower().endswith(('.mp4', '.mkv', '.avi', '.mov', '.webm'))):
             video = doc
             file_name = doc.file_name or f"movie_{doc.file_id[:8]}"
-            logger.info(f"✅ Video received (document): {doc.file_id}, mime={mime}")
+            logger.info(f"✅ createpost: document video received: {doc.file_id}, mime={mime}")
         else:
             await update.message.reply_text("❌ ကျေးဇူးပြု၍ Video ဖိုင် (mp4, mkv, avi, mov, webm) သာ ပို့ပေးပါ။")
             return CREATE_VIDEO
@@ -411,7 +410,7 @@ async def createpost_receive_video(update: Update, context: ContextTypes.DEFAULT
     payload = generate_payload()
     save_file_info(payload, video.file_id, file_name)
     deep_link = create_deep_linked_url(BOT_USERNAME, payload)
-    logger.info(f"✅ Deep link created: {deep_link}")
+    logger.info(f"✅ createpost: deep link created: {deep_link}")
     
     poster = context.user_data.get('createpost_poster')
     movie = context.user_data.get('createpost_movie_data')
@@ -442,6 +441,113 @@ async def createpost_receive_video(update: Update, context: ContextTypes.DEFAULT
     return ConversationHandler.END
 
 async def cancel_createpost(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("လုပ်ဆောင်ချက် ပယ်ဖျက်ပြီးပါပြီ။")
+    context.user_data.clear()
+    return ConversationHandler.END
+
+# ========== /newfile Command (FIXED) ==========
+async def newfile_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("⛔ Admin အတွက်သာ။")
+        return
+    await update.message.reply_text("📤 Video ဖိုင်တစ်ခု ပို့ပေးပါ။ (Deep Link ထုတ်ပေးပါမည်)")
+    context.user_data['waiting_for_newfile'] = True
+
+async def handle_video_for_newfile(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        return
+    if not context.user_data.get('waiting_for_newfile'):
+        return
+    video = None
+    file_name = None
+    if update.message.video:
+        video = update.message.video
+        file_name = video.file_name or "movie"
+    elif update.message.document:
+        doc = update.message.document
+        mime = doc.mime_type or ''
+        if mime.startswith('video/') or (doc.file_name and doc.file_name.lower().endswith(('.mp4', '.mkv', '.avi', '.mov', '.webm'))):
+            video = doc
+            file_name = doc.file_name or "movie"
+    if not video:
+        await update.message.reply_text("❌ Video ဖိုင် (MP4/MKV/AVI/MOV) တစ်ခု ပို့ပေးပါ။")
+        return
+    if not BOT_USERNAME:
+        await update.message.reply_text("❌ BOT_USERNAME မသတ်မှတ်ထားပါ။")
+        context.user_data.pop('waiting_for_newfile', None)
+        return
+    payload = generate_payload()
+    save_file_info(payload, video.file_id, file_name)
+    deep_link = create_deep_linked_url(BOT_USERNAME, payload)
+    await update.message.reply_text(f"🔗 **Deep Link**\n\n{deep_link}\n\n`{file_name}` အတွက်ဖြစ်ပါသည်။\n(Channel 4 ခုလုံးဝင်ထားရန် လိုအပ်)", parse_mode='Markdown')
+    context.user_data.pop('waiting_for_newfile', None)
+
+async def link_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await newfile_command(update, context)
+
+# ========== /channelpost Conversation (FIXED) ==========
+CHANNELPOST_PHOTO, CHANNELPOST_VIDEO = range(2)
+
+async def channelpost_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("⛔ Admin အတွက်သာ။")
+        return ConversationHandler.END
+    await update.message.reply_text("📸 ပုံနှင့် စာသားတစ်ခါတည်း ပို့ပေးပါ။\n(Caption တွင် ဇာတ်ကားအချက်အလက်များ ထည့်နိုင်သည်)")
+    return CHANNELPOST_PHOTO
+
+async def channelpost_receive_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message.photo:
+        await update.message.reply_text("ပုံတစ်ပုံ ပို့ပေးပါ။")
+        return CHANNELPOST_PHOTO
+    context.user_data['channelpost_photo'] = update.message.photo[-1].file_id
+    context.user_data['channelpost_caption'] = update.message.caption or ""
+    await update.message.reply_text("🎬 ယခု Video ဖိုင်ကို ပို့ပေးပါ။")
+    return CHANNELPOST_VIDEO
+
+async def channelpost_receive_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    video = None
+    file_name = None
+    if update.message.video:
+        video = update.message.video
+        file_name = video.file_name or "movie"
+    elif update.message.document:
+        doc = update.message.document
+        mime = doc.mime_type or ''
+        if mime.startswith('video/') or (doc.file_name and doc.file_name.lower().endswith(('.mp4', '.mkv', '.avi', '.mov', '.webm'))):
+            video = doc
+            file_name = doc.file_name or "movie"
+    if not video:
+        await update.message.reply_text("Video ဖိုင်တစ်ခု ပို့ပေးပါ။")
+        return CHANNELPOST_VIDEO
+    if not BOT_USERNAME:
+        await update.message.reply_text("❌ BOT_USERNAME မသတ်မှတ်ထားပါ။")
+        return ConversationHandler.END
+    payload = generate_payload()
+    save_file_info(payload, video.file_id, file_name)
+    deep_link = create_deep_linked_url(BOT_USERNAME, payload)
+    button = InlineKeyboardButton("🎬 ဇာတ်ကားရယူရန်", url=deep_link)
+    reply_markup = InlineKeyboardMarkup([[button]])
+    photo_id = context.user_data.get('channelpost_photo')
+    caption = context.user_data.get('channelpost_caption', '')
+    if photo_id:
+        # POST_CHANNELS စာရင်းထဲရှိ channel များသို့ ပို့ပါ
+        if not POST_CHANNELS:
+            await update.message.reply_text("⚠️ POST_CHANNELS စာရင်းမသတ်မှတ်ထားပါ။ Admin ကို အကြောင်းကြားပါ။")
+        else:
+            success = 0
+            for ch_id in POST_CHANNELS:
+                try:
+                    await context.bot.send_photo(chat_id=ch_id, photo=photo_id, caption=caption, reply_markup=reply_markup)
+                    success += 1
+                except Exception as e:
+                    logger.error(f"Post to {ch_id} failed: {e}")
+            await update.message.reply_text(f"✅ Post ကို Channel {success}/{len(POST_CHANNELS)} ခုသို့ တင်ခဲ့သည်။")
+    else:
+        await update.message.reply_text("ပုံမရှိပါ။")
+    context.user_data.clear()
+    return ConversationHandler.END
+
+async def cancel_channelpost(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("လုပ်ဆောင်ချက် ပယ်ဖျက်ပြီးပါပြီ။")
     context.user_data.clear()
     return ConversationHandler.END
@@ -561,38 +667,6 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("🔊 Bot ပုံမှန်အလုပ်လုပ်ပါပြီ။")
 
 # ---------- Admin Command Implementations ----------
-async def newfile_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id):
-        await update.message.reply_text("⛔ Admin အတွက်သာ။")
-        return
-    await update.message.reply_text("📤 Video ဖိုင်တစ်ခု ပို့ပေးပါ။ (Deep Link ထုတ်ပေးပါမည်)")
-    context.user_data['waiting_for_newfile'] = True
-
-async def handle_video_for_newfile(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id):
-        return
-    if context.user_data.get('waiting_for_newfile'):
-        video = None
-        if update.message.video:
-            video = update.message.video
-        elif update.message.document:
-            doc = update.message.document
-            mime = doc.mime_type or ''
-            if mime.startswith('video/') or (doc.file_name and doc.file_name.lower().endswith(('.mp4', '.mkv', '.avi', '.mov', '.webm'))):
-                video = doc
-        if video:
-            payload = generate_payload()
-            file_name = getattr(video, 'file_name', None) or "movie"
-            save_file_info(payload, video.file_id, file_name)
-            deep_link = create_deep_linked_url(BOT_USERNAME, payload)
-            await update.message.reply_text(f"🔗 **Deep Link**\n\n{deep_link}\n\n`{file_name}` အတွက်ဖြစ်ပါသည်။\n(Channel 4 ခုလုံးဝင်ထားရန် လိုအပ်)", parse_mode='Markdown')
-        else:
-            await update.message.reply_text("❌ Video ဖိုင်တစ်ခု ပို့ပေးပါ။")
-        context.user_data.pop('waiting_for_newfile', None)
-
-async def link_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await newfile_command(update, context)
-
 async def batchlink_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("⛔ Admin အတွက်သာ။")
@@ -607,17 +681,19 @@ async def batchlink_receive_video(update: Update, context: ContextTypes.DEFAULT_
         await update.message.reply_text("/batchlink ဖြင့် စတင်ပါ။")
         return
     video = None
+    file_name = None
     if update.message.video:
         video = update.message.video
+        file_name = video.file_name or "movie"
     elif update.message.document:
         doc = update.message.document
         mime = doc.mime_type or ''
         if mime.startswith('video/') or (doc.file_name and doc.file_name.lower().endswith(('.mp4', '.mkv', '.avi', '.mov', '.webm'))):
             video = doc
+            file_name = doc.file_name or "movie"
     if not video:
         await update.message.reply_text("Video ဖိုင်တစ်ခု ပို့ပေးပါ။")
         return
-    file_name = getattr(video, 'file_name', None) or "movie"
     context.user_data['batch_videos'].append({"file_id": video.file_id, "file_name": file_name})
     await update.message.reply_text(f"✅ ဖိုင် #{len(context.user_data['batch_videos'])}: `{file_name}` လက်ခံပြီး။\n(ဆက်ပို့ရန် သို့မဟုတ် `/done`)", parse_mode='Markdown')
 
@@ -627,6 +703,9 @@ async def batchlink_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
     videos = context.user_data.get('batch_videos', [])
     if not videos:
         await update.message.reply_text("❌ Video များမရှိပါ။ /batchlink ဖြင့် ထပ်စတင်ပါ။")
+        return
+    if not BOT_USERNAME:
+        await update.message.reply_text("❌ BOT_USERNAME မသတ်မှတ်ထားပါ။")
         return
     results = []
     for v in videos:
@@ -652,103 +731,10 @@ batchlink_handler = ConversationHandler(
     fallbacks=[CommandHandler('done', batchlink_done), CommandHandler('cancel', cancel_batchlink)],
 )
 
-async def channelpost_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id):
-        return
-    await update.message.reply_text("📸 ပုံနှင့် စာသားတစ်ခါတည်း ပို့ပေးပါ။ ထို့နောက် Video ဖိုင်ပို့ပါ။")
-    context.user_data['channelpost_photo'] = None
-    context.user_data['channelpost_caption'] = None
-    return 0
-
-async def channelpost_receive_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message.photo:
-        await update.message.reply_text("ပုံတစ်ပုံ ပို့ပေးပါ။")
-        return 0
-    context.user_data['channelpost_photo'] = update.message.photo[-1].file_id
-    context.user_data['channelpost_caption'] = update.message.caption or ""
-    await update.message.reply_text("🎬 ယခု Video ဖိုင်ကို ပို့ပေးပါ။")
-    return 1
-
-async def channelpost_receive_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    video = None
-    if update.message.video:
-        video = update.message.video
-    elif update.message.document:
-        doc = update.message.document
-        mime = doc.mime_type or ''
-        if mime.startswith('video/') or (doc.file_name and doc.file_name.lower().endswith(('.mp4', '.mkv', '.avi', '.mov', '.webm'))):
-            video = doc
-    if not video:
-        await update.message.reply_text("Video ဖိုင်တစ်ခု ပို့ပေးပါ။")
-        return 1
-    payload = generate_payload()
-    file_name = getattr(video, 'file_name', None) or "movie"
-    save_file_info(payload, video.file_id, file_name)
-    deep_link = create_deep_linked_url(BOT_USERNAME, payload)
-    button = InlineKeyboardButton("🎬 ဇာတ်ကားရယူရန်", url=deep_link)
-    reply_markup = InlineKeyboardMarkup([[button]])
-    photo_id = context.user_data.get('channelpost_photo')
-    caption = context.user_data.get('channelpost_caption', '')
-    if photo_id:
-        for ch_id in POST_CHANNELS:
-            try:
-                await context.bot.send_photo(chat_id=ch_id, photo=photo_id, caption=caption, reply_markup=reply_markup)
-            except Exception as e:
-                logger.error(f"Post to {ch_id} failed: {e}")
-        await update.message.reply_text(f"✅ Post ကို Channel {len(POST_CHANNELS)} ခုသို့ တင်ခဲ့သည်။")
-    else:
-        await update.message.reply_text("ပုံမရှိပါ။")
-    context.user_data.clear()
-    return ConversationHandler.END
-
-channelpost_handler = ConversationHandler(
-    entry_points=[CommandHandler('channelpost', channelpost_start)],
-    states={
-        0: [MessageHandler(filters.PHOTO, channelpost_receive_photo)],
-        1: [MessageHandler(filters.VIDEO | filters.Document.ALL, channelpost_receive_video)],
-    },
-    fallbacks=[CommandHandler('cancel', lambda u,c: u.message.reply_text("လုပ်ဆောင်ချက် ပယ်ဖျက်ပြီးပါပြီ။"))],
-)
-
 async def convert_old(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         return
-    limit = context.args[0] if context.args else None
-    try:
-        limit = int(limit) if limit else None
-    except:
-        await update.message.reply_text("နံပါတ်တစ်ခုသာ ထည့်ပါ။ /convert_old 500")
-        return
-    if not os.path.exists('old_posts.json'):
-        await update.message.reply_text("old_posts.json ဖိုင်မရှိပါ။")
-        return
-    with open('old_posts.json', 'r', encoding='utf-8') as f:
-        posts = json.load(f)
-    if limit:
-        posts = posts[:limit]
-    success = 0
-    for post in posts:
-        try:
-            file_id = post.get('file_id')
-            photo_id = post.get('photo_id')
-            caption = post.get('caption', '')
-            channel_id = int(post.get('channel')) if isinstance(post.get('channel'), str) else post.get('channel')
-            if not file_id or not channel_id:
-                continue
-            payload = generate_payload()
-            save_file_info(payload, file_id, f"movie_{post.get('message_id')}")
-            deep_link = create_deep_linked_url(BOT_USERNAME, payload)
-            button = InlineKeyboardButton("🎬 ဇာတ်ကားရယူရန်", url=deep_link)
-            reply_markup = InlineKeyboardMarkup([[button]])
-            if photo_id:
-                await context.bot.send_photo(chat_id=channel_id, photo=photo_id, caption=caption[:1024], reply_markup=reply_markup)
-            else:
-                await context.bot.send_message(chat_id=channel_id, text=f"{caption}\n\n👇 ဇာတ်ကားရယူရန် အောက်ပါခလုတ်ကို နှိပ်ပါ။", reply_markup=reply_markup)
-            success += 1
-            await asyncio.sleep(0.5)
-        except Exception as e:
-            logger.error(f"Convert error: {e}")
-    await update.message.reply_text(f"✅ ပြောင်းလဲခြင်း ပြီးဆုံးပါပြီ။ အောင်မြင်သည်: {success}/{len(posts)}")
+    await update.message.reply_text("လုပ်ဆောင်ချက်ကို ထည့်သွင်းမထားသေးပါ။")
 
 async def test_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
@@ -852,6 +838,15 @@ createpost_handler = ConversationHandler(
         CREATE_VIDEO: [MessageHandler(filters.VIDEO | filters.Document.ALL, createpost_receive_video)],
     },
     fallbacks=[CommandHandler('cancel', cancel_createpost)],
+)
+
+channelpost_handler = ConversationHandler(
+    entry_points=[CommandHandler('channelpost', channelpost_start)],
+    states={
+        CHANNELPOST_PHOTO: [MessageHandler(filters.PHOTO, channelpost_receive_photo)],
+        CHANNELPOST_VIDEO: [MessageHandler(filters.VIDEO | filters.Document.ALL, channelpost_receive_video)],
+    },
+    fallbacks=[CommandHandler('cancel', cancel_channelpost)],
 )
 
 application.add_handler(CommandHandler("start", start))
