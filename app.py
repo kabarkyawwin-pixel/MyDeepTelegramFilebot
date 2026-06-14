@@ -119,7 +119,6 @@ if not TOKEN:
 BOT_USERNAME = os.environ.get("BOT_USERNAME")
 if not BOT_USERNAME:
     logger.error("BOT_USERNAME environment variable not set! Deep links will not work.")
-    # သတိပေးချက်သာ၊ bot ကို မရပ်ပါနဲ့
 
 ADMIN_IDS = [int(id.strip()) for id in os.environ.get("ADMIN_ID", "").split(",") if id.strip()] if os.environ.get("ADMIN_ID") else []
 
@@ -130,7 +129,7 @@ REQUIRED_CHANNELS = [
     {"id": "-1003785717514", "name": "🎵 မြန်မာသီချင်းချန်နယ်", "invite": "https://t.me/wznmusiclibary"}
 ]
 
-POST_CHANNELS = []
+POST_CHANNELS = []  # သင့် channel IDs ထည့်ရန်
 OTHER_CHANNELS = []
 MUSIC_CHANNEL_LINK = ""
 
@@ -381,23 +380,39 @@ async def createpost_receive_movie_name(update: Update, context: ContextTypes.DE
 
 async def createpost_receive_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
     video = None
+    file_name = None
+
     if update.message.video:
         video = update.message.video
+        file_name = video.file_name or f"movie_{video.file_unique_id}"
+        logger.info(f"✅ Video received: file_id={video.file_id}, name={file_name}")
     elif update.message.document:
         doc = update.message.document
         mime = doc.mime_type or ''
         if mime.startswith('video/') or (doc.file_name and doc.file_name.lower().endswith(('.mp4', '.mkv', '.avi', '.mov', '.webm'))):
             video = doc
+            file_name = doc.file_name or f"movie_{doc.file_unique_id}"
+            logger.info(f"✅ Document video received: file_id={doc.file_id}, name={file_name}, mime={mime}")
+        else:
+            logger.warning(f"❌ Non-video document: mime={mime}, name={doc.file_name}")
+    
     if not video:
-        await update.message.reply_text("❌ ကျေးဇူးပြု၍ Video ဖိုင် (mp4, mkv, avi, mov, webm) သာ ပို့ပေးပါ။")
+        await update.message.reply_text(
+            "❌ **Video ဖိုင်တစ်ခုသာ ပို့ပေးပါ။**\n\n"
+            "သင်ပို့သောဖိုင်သည် video format (mp4, mkv, avi, mov, webm) ဖြစ်ရပါမည်။\n"
+            "Telegram ၏ **Video** အဖြစ် (သို့) **Document** အဖြစ် ပို့နိုင်ပါသည်။",
+            parse_mode="Markdown"
+        )
         return CREATE_VIDEO
 
     if not BOT_USERNAME:
-        await update.message.reply_text("❌ BOT_USERNAME မသတ်မှတ်ထားပါ။ Admin ကို ဆက်သွယ်ပါ။")
+        await update.message.reply_text("❌ BOT_USERNAME environment variable မသတ်မှတ်ထားပါ။ Admin ကို ဆက်သွယ်ပါ။")
         return ConversationHandler.END
 
     payload = generate_payload()
-    file_name = getattr(video, 'file_name', None) or f"movie_{payload[:8]}"
+    if not file_name:
+        file_name = getattr(video, 'file_name', None) or f"movie_{payload[:8]}"
+    
     save_file_info(payload, video.file_id, file_name)
     deep_link = create_deep_linked_url(BOT_USERNAME, payload)
 
@@ -877,7 +892,7 @@ async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     await show_menu(update, context)
 
-# Placeholders (not implemented)
+# Placeholders
 async def schedule(update, context): await update.message.reply_text("⏳ အချိန်ဇယား - လုပ်ဆောင်ဆဲ။")
 async def listschedule(update, context): await update.message.reply_text("📋 အချိန်ဇယားစာရင်း - လုပ်ဆောင်ဆဲ။")
 async def cancelschedule(update, context): await update.message.reply_text("❌ အချိန်ဇယားဖျက်ရန် - လုပ်ဆောင်ဆဲ။")
