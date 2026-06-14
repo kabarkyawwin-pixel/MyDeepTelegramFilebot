@@ -8,6 +8,7 @@ import json
 from datetime import datetime
 from flask import Flask
 import requests
+from deep_translator import GoogleTranslator
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, ContextTypes, ConversationHandler, MessageHandler, filters, CallbackQueryHandler
 from telegram.helpers import create_deep_linked_url
@@ -171,7 +172,18 @@ async def create_telegraph_page(title: str, content_text: str) -> str:
         logger.error(f"Telegraph error: {e}")
         return None
 
-# ========== NEW: OMDb Movie Info Functions ==========
+# ========== Translation ==========
+def translate_to_burmese(text):
+    if not text or text == 'N/A':
+        return text
+    try:
+        translated = GoogleTranslator(source='auto', target='my').translate(text)
+        return translated
+    except Exception as e:
+        logger.error(f"Translation error: {e}")
+        return text
+
+# ========== OMDb Movie Info Functions ==========
 OMDB_API_KEY = "5025f95c"
 MOVIE_WATCH_CHANNEL = os.environ.get("MOVIE_WATCH_CHANNEL", "yourmoviechannel")
 
@@ -184,18 +196,20 @@ def get_movie_info(movie_name):
         if data.get('Response') == 'False':
             logger.warning(f"OMDb not found: {movie_name}")
             return None
+        plot_en = data.get('Plot', 'N/A')
+        plot_my = translate_to_burmese(plot_en)
         return {
             'title': data.get('Title', 'N/A'),
             'year': data.get('Year', 'N/A'),
             'rated': data.get('Rated', 'N/A'),
             'released': data.get('Released', 'N/A'),
             'runtime': data.get('Runtime', 'N/A'),
-            'genre': data.get('Genre', 'N/A'),
-            'director': data.get('Director', 'N/A'),
-            'actors': data.get('Actors', 'N/A'),
-            'plot': data.get('Plot', 'N/A'),
-            'language': data.get('Language', 'N/A'),
-            'country': data.get('Country', 'N/A'),
+            'genre': translate_to_burmese(data.get('Genre', 'N/A')),
+            'director': translate_to_burmese(data.get('Director', 'N/A')),
+            'actors': translate_to_burmese(data.get('Actors', 'N/A')),
+            'plot': plot_my,
+            'language': translate_to_burmese(data.get('Language', 'N/A')),
+            'country': translate_to_burmese(data.get('Country', 'N/A')),
             'poster': data.get('Poster', 'N/A'),
             'imdb_rating': data.get('imdbRating', 'N/A'),
             'imdb_votes': data.get('imdbVotes', 'N/A'),
@@ -206,7 +220,7 @@ def get_movie_info(movie_name):
         return None
 
 def format_movie_info_burmese(movie):
-    """Format movie info in Burmese-friendly Markdown"""
+    """Format movie info in Burmese"""
     try:
         rating = float(movie['imdb_rating'])
         stars = '⭐' * int(rating // 2) + ('✨' if rating % 2 >= 0.5 else '')
@@ -268,7 +282,6 @@ async def send_movie_info(update: Update, context: ContextTypes.DEFAULT_TYPE, mo
     formatted_text = format_movie_info_burmese(movie)
     keyboard = []
     
-    # If plot is long (>1024 chars), create telegraph page
     if len(movie['plot']) > 1024:
         telegraph_url = await create_telegraph_page_movie(
             f"{movie['title']} ({movie['year']}) - ဇာတ်လမ်းအကျဉ်း",
@@ -277,32 +290,19 @@ async def send_movie_info(update: Update, context: ContextTypes.DEFAULT_TYPE, mo
         if telegraph_url:
             keyboard.append([InlineKeyboardButton("📖 ဇာတ်လမ်းအကျဉ်း အပြည့်ဖတ်ရန်", url=telegraph_url)])
     
-    # Add watch button (deep link to your movie channel)
     deeplink = f"tg://resolve?domain={MOVIE_WATCH_CHANNEL}&start=movie_{movie['imdb_id']}"
     keyboard.append([InlineKeyboardButton("🎬 ဇာတ်ကားကြည့်ရှုရန်", url=deeplink)])
-    
     reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
     
-    # Try to send with poster if available
-    try:
-        if movie['poster'] and movie['poster'] != 'N/A':
-            await context.bot.send_photo(
-                chat_id=user_id,
-                photo=movie['poster'],
-                caption=formatted_text,
-                parse_mode='Markdown',
-                reply_markup=reply_markup
-            )
-        else:
-            await context.bot.send_message(
-                chat_id=user_id,
-                text=formatted_text,
-                parse_mode='Markdown',
-                reply_markup=reply_markup,
-                disable_web_page_preview=True
-            )
-    except Exception as e:
-        logger.error(f"Error sending movie info: {e}")
+    if movie['poster'] and movie['poster'] != 'N/A':
+        await context.bot.send_photo(
+            chat_id=user_id,
+            photo=movie['poster'],
+            caption=formatted_text,
+            parse_mode='Markdown',
+            reply_markup=reply_markup
+        )
+    else:
         await context.bot.send_message(
             chat_id=user_id,
             text=formatted_text,
@@ -311,21 +311,17 @@ async def send_movie_info(update: Update, context: ContextTypes.DEFAULT_TYPE, mo
             disable_web_page_preview=True
         )
 
-# ========== NEW: /movie Command ==========
+# ========== /movie Command ==========
 async def movie_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /movie <movie_name>"""
     if not context.args:
         await update.message.reply_text("ဥပမာ - `/movie Inception`", parse_mode="Markdown")
         return
     movie_name = ' '.join(context.args)
     await send_movie_info(update, context, movie_name)
 
-# ========== NEW: Handle photo with caption as movie name ==========
+# ========== Handle photo with caption as movie name ==========
 async def handle_photo_movie(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """If a photo is sent with a caption, treat caption as movie name"""
-    # Skip if the photo is part of admin newpost conversation (check user_data)
     if context.user_data.get('waiting_for_newfile') or context.user_data.get('waiting_for_link'):
-        # Let existing handlers process
         return
     if not update.message.caption:
         await update.message.reply_text("📌 ဇာတ်ကားအမည်ကို Caption အနေနဲ့ ထည့်ပေးပါ။")
@@ -333,12 +329,133 @@ async def handle_photo_movie(update: Update, context: ContextTypes.DEFAULT_TYPE)
     movie_name = update.message.caption.strip()
     await send_movie_info(update, context, movie_name)
 
+# ========== CREATE POST CONVERSATION ==========
+CREATE_POSTER, CREATE_CAPTION, CREATE_VIDEO = range(3)
+
+async def createpost_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("⛔ သင်သည် Admin မဟုတ်ပါ။")
+        return ConversationHandler.END
+    await update.message.reply_text("📸 ဇာတ်ကား Poster ပုံတစ်ပုံ ပို့ပေးပါ။\n(စာသားပါက Caption တွင် ဇာတ်ကားအမည်ထည့်နိုင်သည်)")
+    return CREATE_POSTER
+
+async def createpost_receive_poster(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message.photo:
+        await update.message.reply_text("ပုံတစ်ပုံ ပို့ပေးပါ။")
+        return CREATE_POSTER
+    context.user_data['createpost_poster'] = update.message.photo[-1].file_id
+    
+    if update.message.caption:
+        movie_name = update.message.caption.strip()
+        context.user_data['createpost_movie_name'] = movie_name
+        await update.message.reply_text(f"🔍 '{movie_name}' ကို ရှာဖွေနေပါသည်...")
+        movie = get_movie_info(movie_name)
+        if not movie:
+            await update.message.reply_text("❌ ရှာမတွေ့ပါ။ ကျေးဇူးပြု၍ အင်္ဂလိပ်အမည်အပြည့်အစုံ ထည့်ပေးပါ။")
+            return CREATE_POSTER
+        context.user_data['createpost_movie_data'] = movie
+        formatted = format_movie_info_burmese(movie)
+        if len(movie['plot']) > 1024:
+            telegraph_url = await create_telegraph_page_movie(f"{movie['title']} ({movie['year']}) - အပြည့်အစုံ", movie['plot'])
+            if telegraph_url:
+                formatted += f"\n\n📖 [ဇာတ်ညွှန်းအပြည့်အစုံဖတ်ရန်]({telegraph_url})"
+        await update.message.reply_text(f"**✅ အောက်ပါအတိုင်း တွေ့ရှိရပါသည်။**\n\n{formatted}", parse_mode='Markdown', disable_web_page_preview=True)
+        await update.message.reply_text("🎬 ဆက်လက်ရန် ဇာတ်ကား Video ဖိုင်ကို ပို့ပေးပါ။")
+        return CREATE_VIDEO
+    else:
+        await update.message.reply_text("✍️ ဇာတ်ကားအမည် (အင်္ဂလိပ်လို) ကို စာသားအနေဖြင့် ပို့ပေးပါ။")
+        return CREATE_CAPTION
+
+async def createpost_receive_movie_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message.text:
+        await update.message.reply_text("ကျေးဇူးပြု၍ ဇာတ်ကားအမည် စာသားပို့ပါ။")
+        return CREATE_CAPTION
+    movie_name = update.message.text.strip()
+    context.user_data['createpost_movie_name'] = movie_name
+    await update.message.reply_text(f"🔍 '{movie_name}' ကို ရှာဖွေနေပါသည်...")
+    movie = get_movie_info(movie_name)
+    if not movie:
+        await update.message.reply_text("❌ ရှာမတွေ့ပါ။ ကျေးဇူးပြု၍ အင်္ဂလိပ်အမည်အပြည့်အစုံ ထည့်ပေးပါ။")
+        return CREATE_CAPTION
+    context.user_data['createpost_movie_data'] = movie
+    formatted = format_movie_info_burmese(movie)
+    if len(movie['plot']) > 1024:
+        telegraph_url = await create_telegraph_page_movie(f"{movie['title']} ({movie['year']}) - အပြည့်အစုံ", movie['plot'])
+        if telegraph_url:
+            formatted += f"\n\n📖 [ဇာတ်ညွှန်းအပြည့်အစုံဖတ်ရန်]({telegraph_url})"
+    await update.message.reply_text(f"**✅ အောက်ပါအတိုင်း တွေ့ရှိရပါသည်။**\n\n{formatted}", parse_mode='Markdown', disable_web_page_preview=True)
+    await update.message.reply_text("🎬 ဆက်လက်ရန် ဇာတ်ကား Video ဖိုင်ကို ပို့ပေးပါ။")
+    return CREATE_VIDEO
+
+async def createpost_receive_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    video = None
+    if update.message.video:
+        video = update.message.video
+    elif update.message.document and update.message.document.mime_type.startswith('video/'):
+        video = update.message.document
+    if not video:
+        await update.message.reply_text("❌ Video file တစ်ခု ပို့ပေးပါ။")
+        return CREATE_VIDEO
+    
+    payload = generate_payload()
+    file_name = getattr(video, 'file_name', None) or f"movie_{payload[:8]}"
+    save_file_info(payload, video.file_id, file_name)
+    deep_link = create_deep_linked_url(BOT_USERNAME, payload)
+    
+    poster = context.user_data.get('createpost_poster')
+    movie = context.user_data.get('createpost_movie_data')
+    if not movie:
+        await update.message.reply_text("❌ ဇာတ်ကားအချက်အလက် ပျောက်နေသည်။ /createpost ကို ထပ်မံစတင်ပါ။")
+        return ConversationHandler.END
+    
+    formatted_info = format_movie_info_burmese(movie)
+    keyboard = []
+    keyboard.append([InlineKeyboardButton("🎬 ဇာတ်ကားရယူရန်", url=deep_link)])
+    if len(movie['plot']) > 1024:
+        telegraph_url = await create_telegraph_page_movie(f"{movie['title']} ({movie['year']}) - အပြည့်အစုံ", movie['plot'])
+        if telegraph_url:
+            keyboard.append([InlineKeyboardButton("📖 ဇာတ်ညွှန်းအပြည့်အစုံဖတ်ရန်", url=telegraph_url)])
+    if OTHER_CHANNELS:
+        for idx, link in enumerate(OTHER_CHANNELS, 1):
+            if idx == 1:
+                keyboard.append([InlineKeyboardButton("🎬 ဇာတ်ကားချန်နယ်", url=link)])
+            elif idx == 2:
+                keyboard.append([InlineKeyboardButton("👥 လူကြီးချန်နယ်", url=link)])
+            elif idx == 3:
+                keyboard.append([InlineKeyboardButton("🎵 မြန်မာသီချင်းချန်နယ်", url=link)])
+            else:
+                keyboard.append([InlineKeyboardButton(f"Channel {idx}", url=link)])
+    if MUSIC_CHANNEL_LINK:
+        keyboard.append([InlineKeyboardButton("🎵 သီချင်း/တရားတော် 🙏", url=MUSIC_CHANNEL_LINK)])
+    
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await update.message.reply_photo(
+        photo=poster,
+        caption=formatted_info,
+        parse_mode='Markdown',
+        reply_markup=reply_markup
+    )
+    await update.message.reply_text(
+        f"✅ **Post ပြင်ဆင်ပြီးပါပြီ။**\n\n"
+        f"Deep Link: {deep_link}\n"
+        f"ဤ Post ကို သင့် Channel တွင် Forward လုပ်ပါ။"
+    )
+    context.user_data.clear()
+    return ConversationHandler.END
+
+async def cancel_createpost(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("လုပ်ဆောင်ချက် ပယ်ဖျက်ပြီးပါပြီ။")
+    context.user_data.clear()
+    return ConversationHandler.END
+
 # ---------- Admin Menu ----------
 async def show_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [InlineKeyboardButton("🆕 New Post", callback_data="menu_newpost")],
         [InlineKeyboardButton("🔗 New File (Deep Link)", callback_data="menu_newfile")],
         [InlineKeyboardButton("📢 Channel Post", callback_data="menu_channelpost")],
+        [InlineKeyboardButton("🖼️ Create Post (ပုံ-စာ-ဗီဒီယို)", callback_data="menu_createpost")],
         [InlineKeyboardButton("📊 Stats", callback_data="menu_stats")],
         [InlineKeyboardButton("📢 Broadcast", callback_data="menu_broadcast")],
         [InlineKeyboardButton("🚫 Blocklist", callback_data="menu_blocklist")],
@@ -366,6 +483,8 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("🔗 `/newfile` command ကို သုံးပါ။ (Video ပို့ပါက Deep Link ရမည်)")
     elif data == "menu_channelpost":
         await query.edit_message_text("📢 `/channelpost` command ကို သုံးပါ။ (ပုံ+စာသားတစ်ခါတည်း → Video → Channel များသို့ တိုက်ရိုက်တင်မည်)")
+    elif data == "menu_createpost":
+        await query.edit_message_text("🖼️ `/createpost` command ကို သုံးပါ။ (ပုံ၊ စာသား၊ ဗီဒီယိုတစ်ခုတည်းဖြင့် Post အပြည့်အစုံဖန်တီးရန်)")
     elif data == "menu_stats":
         total_users = users_collection.count_documents({})
         total_requests = get_total_requests()
@@ -949,7 +1068,7 @@ async def deleteall(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     await update.message.reply_text("⚠️ အားလုံးဖျက်ရန် (လုပ်ဆောင်ဆဲ)")
 
-# ========== Main Start Handler (The Missing Piece) ==========
+# ========== Main Start Handler ==========
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
 
@@ -1031,7 +1150,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             increment_requests()
             reset_attempts(user_id)
 
-            # Fixed Channel Invite Buttons
             keyboard = []
             keyboard.append([InlineKeyboardButton("🎬 ဇာတ်ကားချန်နယ်", url="https://t.me/moviesandseriesforallwzn")])
             keyboard.append([InlineKeyboardButton("👥 လူကြီးချန်နယ်", url="https://t.me/everyboyhobby")])
@@ -1064,7 +1182,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ---------- Application ----------
 application = Application.builder().token(TOKEN).build()
 
-# Conversation handlers (ဒီအတိုင်းထားပါ)
+# Conversation handlers
 newpost_handler = ConversationHandler(
     entry_points=[CommandHandler('newpost', newpost_start)],
     states={
@@ -1102,7 +1220,20 @@ batchlink_handler = ConversationHandler(
     fallbacks=[CommandHandler('cancel', cancel_batchlink)],
 )
 
-# Adding all handlers
+createpost_handler = ConversationHandler(
+    entry_points=[CommandHandler('createpost', createpost_start)],
+    states={
+        CREATE_POSTER: [MessageHandler(filters.PHOTO, createpost_receive_poster)],
+        CREATE_CAPTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, createpost_receive_movie_name)],
+        CREATE_VIDEO: [
+            MessageHandler(filters.VIDEO, createpost_receive_video),
+            MessageHandler(filters.Document.ALL, createpost_receive_video)
+        ],
+    },
+    fallbacks=[CommandHandler('cancel', cancel_createpost)],
+)
+
+# Add all handlers
 application.add_handler(CommandHandler("start", start))
 application.add_handler(newpost_handler)
 application.add_handler(CommandHandler("newfile", newfile_command))
@@ -1129,8 +1260,7 @@ application.add_handler(CommandHandler("convert_old", convert_old))
 application.add_handler(CommandHandler("test_channel", test_channel))
 application.add_handler(MessageHandler(filters.TEXT & filters.ChatType.PRIVATE & ~filters.COMMAND, test_channel_receive_id))
 application.add_handler(CallbackQueryHandler(menu_callback, pattern="menu_"))
-
-# NEW handlers for movie info feature
+application.add_handler(createpost_handler)
 application.add_handler(CommandHandler("movie", movie_command))
 application.add_handler(MessageHandler(filters.PHOTO & ~filters.COMMAND, handle_photo_movie), group=1)
 
