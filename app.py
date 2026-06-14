@@ -172,8 +172,8 @@ async def create_telegraph_page(title: str, content_text: str) -> str:
         return None
 
 # ========== NEW: OMDb Movie Info Functions ==========
-OMDB_API_KEY = "5025f95c"   # <-- user provided key
-MOVIE_WATCH_CHANNEL = os.environ.get("MOVIE_WATCH_CHANNEL", "yourmoviechannel")  # e.g., "wznmoviescollector"
+OMDB_API_KEY = "5025f95c"
+MOVIE_WATCH_CHANNEL = os.environ.get("MOVIE_WATCH_CHANNEL", "yourmoviechannel")
 
 def get_movie_info(movie_name):
     """Fetch movie details from OMDb API"""
@@ -667,7 +667,7 @@ async def channelpost_receive_photo(update: Update, context: ContextTypes.DEFAUL
                 await update.message.reply_text("❌ Telegraph ဖန်တီးရာတွင် အမှား။ စာသားကို အတိုင်းသုံးပါမည်။")
         except Exception as e:
             logger.error(f"Telegraph error: {e}")
-            await update.message.reply_text("❌ Telegraph စာမျက်နှာ ဖန်တီးရာတွင် ချို့ယွင်းချက်။")
+            await update.message.reply_text("❌ Telegraph စာမျက်နှာ ဖန်တီးရာတွင် ချို့ယွင်းချက်ရှိသည်။")
     await update.message.reply_text("🎬 **Video File** ကို ပို့ပေးပါ။")
     return CHANNELPOST_VIDEO
 
@@ -759,7 +759,7 @@ async def test_channel_receive_id(update: Update, context: ContextTypes.DEFAULT_
         finally:
             context.user_data.pop('test_channel_mode', None)
 
-# ---------- /convert_old Command (ပြင်ဆင်ပြီး - string to int သေချာပြောင်း) ----------
+# ---------- /convert_old Command ----------
 async def convert_old(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("⛔ သင်သည် Admin မဟုတ်ပါ။")
@@ -949,9 +949,122 @@ async def deleteall(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     await update.message.reply_text("⚠️ အားလုံးဖျက်ရန် (လုပ်ဆောင်ဆဲ)")
 
+# ========== Main Start Handler (The Missing Piece) ==========
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+
+    if context.args and len(context.args) > 0:
+        payload = context.args[0]
+        file_info = get_file_info(payload)
+        if not file_info:
+            await update.message.reply_text("❌ ဤလင့်သည် မမှန်ကန်ပါ သို့မဟုတ် သက်တမ်းကုန်သွားပါပြီ။")
+            return
+
+        if is_user_blocked(user_id):
+            await update.message.reply_text(
+                "🔒 လူကြီးမင်းသည် ချန်နယ်များကို မဝင်ဘဲ လင့်ကို ၁၀ ကြိမ်အထက်နှိပ်ထားသည့်အတွက် ကျွန်ုပ်က block လုပ်ထားပါသည်။\n"
+                "ကျေးဇူးပြု၍ လိုအပ်သော ချန်နယ်များအားလုံးကို ဝင်ပြီးနောက် ကျွန်ုပ်ထံ ဆက်သွယ်ပါ။"
+            )
+            return
+
+        all_joined, missing = await check_all_channels(user_id, context)
+        if not all_joined:
+            increment_attempts(user_id)
+            attempts = get_attempt_count(user_id)
+            remaining = 10 - attempts
+
+            msg = "🎬 **ဇာတ်ကားဖိုင်ကို ဒေါင်းလုဒ်လုပ်ရန် အောက်ပါ Channel များအားလုံးကို ဝင်ထားပေးပါနော်**\n\n"
+            for ch in REQUIRED_CHANNELS:
+                msg += f"• **{ch['name']}**\n"
+                msg += f"  👉 [ဝင်ရန် နှိပ်ပါ]({ch['invite']})\n\n"
+            msg += f"⚠️ သင်သည် ဤလင့်ကို **{attempts}/10** ကြိမ် နှိပ်ပြီးဖြစ်သည်။ {remaining} ကြိမ်သာ ကျန်ပါသေးသည်။\n"
+            msg += "Channel များအားလုံးဝင်ပြီးနောက် လင့်ကို ထပ်မံနှိပ်ပါ။"
+
+            await update.message.reply_text(msg, parse_mode="Markdown", disable_web_page_preview=True)
+
+            if attempts >= 10:
+                block_user(user_id)
+                block_msg = (
+                    "🚫 **လူကြီးမင်းသည် ချန်နယ်ကို မဝင်ဘဲ ဇာတ်ကားလင့်ကို ၁၀ ကြိမ်နှိပ်လိုက်သည့်အတွက် ဇာတ်ကားရယူနိုင်မည် မဟုတ်ပါ။**\n\n"
+                    "ဝမ်းနည်းပါတယ်ရှင့် လူကြီးမင်းကို ကျွန်ုပ်၏ဘက်မှ block လုပ်လိုက်ပါသည်။\n"
+                    "သာယာပျော်ရွင်သောနေ့လေးဖြစ်ပါစေ 🙏🙏🙏"
+                )
+                await update.message.reply_text(block_msg)
+            return
+
+        if is_user_blocked(user_id):
+            unblock_user(user_id)
+            await update.message.reply_text("✅ သင်သည် လိုအပ်သောချန်နယ်များအားလုံးကို ဝင်ရောက်ထားပြီးဖြစ်သောကြောင့် သင့်အား unblock လုပ်လိုက်ပါသည်။")
+
+        file_id = file_info["file_id"]
+        file_name = file_info["file_name"]
+
+        try:
+            await update.message.reply_text(f"🎬 {file_name} ပို့ပေးနေပါပြီ...")
+            video_msg = await context.bot.send_video(
+                chat_id=user_id,
+                video=file_id,
+                caption=f"🎬 သင့်ဇာတ်ကား - {file_name}"
+            )
+            warning_text = (
+                "⚠️ ⚠️ ⚠️ အရေးကြီးပါတယ် ⚠️ ⚠️ ⚠️\n\n"
+                "ဤရုပ်ရှင်ဖိုင်များ/ဗီဒီယိုများကို 5 မိနစ်အတွင်း (မူပိုင်ခွင့်ပြဿနာများကြောင့်) ဖျက်ပါမည်။\n\n"
+                "ကျေးဇူးပြု၍ ဤဖိုင်များ/ဗီဒီယိုများအားလုံးကို သင်၏ Saved Messages များသို့ Forward လုပ်ပြီး ထိုနေရာတွင် ဇာတ်ကားအား ကြည့်ရှုပါ။\n\n"
+                "ကျွန်ုပ်၏ Channel ကို လာရောက်အားပေးမှုအတွက် ကျေးဇူးအထူးတင်ပါတယ် 🙏🙏🙏\n\n"
+                "Channel ရေရှည်တည်တံ့ဖို့အတွက် Support ပေးချင်ပါက Wave Pay (09767011991) ကို ကူညီနိုင်ပါတယ်။\n\n"
+                "အားလုံးကို ကျေးဇူးတင်ပါတယ်။\n\n!!! IMPORTANT !!!\n"
+                "This Movie Files/Videos will be deleted in 5 mins (Due to Copyright Issues).\n"
+                "Please forward these ALL Files/Videos to your Saved Messages and start downloading there."
+            )
+            warn_msg = await context.bot.send_message(chat_id=user_id, text=warning_text)
+
+            async def delete_after():
+                await asyncio.sleep(300)
+                try:
+                    await context.bot.delete_message(chat_id=user_id, message_id=warn_msg.message_id)
+                    await context.bot.delete_message(chat_id=user_id, message_id=video_msg.message_id)
+                except:
+                    pass
+            asyncio.create_task(delete_after())
+
+            add_user(user_id)
+            increment_requests()
+            reset_attempts(user_id)
+
+            # Fixed Channel Invite Buttons
+            keyboard = []
+            keyboard.append([InlineKeyboardButton("🎬 ဇာတ်ကားချန်နယ်", url="https://t.me/moviesandseriesforallwzn")])
+            keyboard.append([InlineKeyboardButton("👥 လူကြီးချန်နယ်", url="https://t.me/everyboyhobby")])
+            keyboard.append([InlineKeyboardButton("🎵 မြန်မာသီချင်းချန်နယ်", url="https://t.me/wznmusiclibary")])
+
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await context.bot.send_message(
+                chat_id=user_id,
+                text="🎉 **အခြားဇာတ်ကားများအတွက် အောက်ပါ Channel များသို့ ဝင်ရောက်ပါ**",
+                reply_markup=reply_markup,
+                parse_mode="Markdown"
+            )
+        except Exception as e:
+            await context.bot.send_message(chat_id=user_id, text=f"❌ Video ပို့ရာတွင် အမှား: {str(e)}")
+    else:
+        if is_admin(user_id):
+            await show_menu(update, context)
+        else:
+            await update.message.reply_text(
+                "🎬 **မင်္ဂလာပါ**\n\n"
+                "ဤ Bot သည် Channel အတွက် ဇာတ်ကားများ ဖြန့်ဝေရန် သုံးပါသည်။\n"
+                "ဇာတ်ကားရယူရန် Channel ရှိ Post အောက်က ခလုတ်ကို နှိပ်ပါ။\n"
+                "ပထမဆုံး လိုအပ်သော Channel 4 ခုလုံးကို ဝင်ရောက်ထားရပါမည်။\n\n"
+                "✨ **အသစ်** - `/movie` command ဖြင့် ဇာတ်ကားအချက်အလက်များ ရှာဖွေနိုင်ပါသည်။\n"
+                "ဥပမာ - `/movie Inception`\n"
+                "ထို့အပြင် Poster ပုံကို Caption တွင် ဇာတ်ကားနာမည်ထည့်၍လည်း အလုပ်လုပ်ပါသည်။",
+                parse_mode="Markdown"
+            )
+
 # ---------- Application ----------
 application = Application.builder().token(TOKEN).build()
 
+# Conversation handlers (ဒီအတိုင်းထားပါ)
 newpost_handler = ConversationHandler(
     entry_points=[CommandHandler('newpost', newpost_start)],
     states={
@@ -989,6 +1102,7 @@ batchlink_handler = ConversationHandler(
     fallbacks=[CommandHandler('cancel', cancel_batchlink)],
 )
 
+# Adding all handlers
 application.add_handler(CommandHandler("start", start))
 application.add_handler(newpost_handler)
 application.add_handler(CommandHandler("newfile", newfile_command))
@@ -1016,7 +1130,7 @@ application.add_handler(CommandHandler("test_channel", test_channel))
 application.add_handler(MessageHandler(filters.TEXT & filters.ChatType.PRIVATE & ~filters.COMMAND, test_channel_receive_id))
 application.add_handler(CallbackQueryHandler(menu_callback, pattern="menu_"))
 
-# NEW HANDLERS
+# NEW handlers for movie info feature
 application.add_handler(CommandHandler("movie", movie_command))
 application.add_handler(MessageHandler(filters.PHOTO & ~filters.COMMAND, handle_photo_movie), group=1)
 
