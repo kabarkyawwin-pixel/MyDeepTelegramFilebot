@@ -113,18 +113,15 @@ ADMIN_IDS = [int(id.strip()) for id in os.environ.get("ADMIN_ID", "").split(",")
 # Channels to post when using /channelpost
 POST_CHANNELS = [ch.strip() for ch in os.environ.get("POST_CHANNELS", "").split(",") if ch.strip()] if os.environ.get("POST_CHANNELS") else []
 
-# Required Channels (4 channels)
+# Required Channels (3 channels with logos)
 REQUIRED_CHANNELS = [
-    {"id": "-1003753299714", "name": "🎬 Movies channel main (HD Movies များ)", "invite": "https://t.me/wznmoviescollector"},
-    {"id": "-1003899625672", "name": "🎬 Movies channel 2 (အရံချန်နယ်)", "invite": "https://t.me/moviesandseriesforallwzn"},
+    {"id": "-1003899625672", "name": "🎬 ဇာတ်ကားချန်နယ် (အရံ)", "invite": "https://t.me/moviesandseriesforallwzn"},
     {"id": "-1003792838735", "name": "🔞 လူကြီးများအတွက် သီးသန့်ချန်နယ် (ကလေးများမဝင်ရ)", "invite": "https://t.me/everyboyhobby"},
     {"id": "-1003785717514", "name": "🎵 မြန်မာသီချင်းချန်နယ်", "invite": "https://t.me/wznmusiclibary"}
 ]
 
-OTHER_CHANNELS = [link.strip() for link in os.environ.get("OTHER_CHANNELS", "").split(",") if link.strip() and link.strip().startswith("http")] if os.environ.get("OTHER_CHANNELS") else []
-MUSIC_CHANNEL_LINK = os.environ.get("MUSIC_CHANNEL_LINK", "")
-if MUSIC_CHANNEL_LINK and not MUSIC_CHANNEL_LINK.startswith("http"):
-    MUSIC_CHANNEL_LINK = ""
+OTHER_CHANNELS = []
+MUSIC_CHANNEL_LINK = ""
 
 def is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS
@@ -251,10 +248,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             increment_requests()
             reset_attempts(user_id)
 
-            # Fixed Channel Invite Buttons
+            # Channel Invite Buttons with logos
             keyboard = []
-            keyboard.append([InlineKeyboardButton("🎬 ဇာတ်ကားချန်နယ်", url="https://t.me/moviesandseriesforallwzn")])
-            keyboard.append([InlineKeyboardButton("👥 လူကြီးချန်နယ်", url="https://t.me/everyboyhobby")])
+            keyboard.append([InlineKeyboardButton("🎬 ဇာတ်ကားချန်နယ် (အရံ)", url="https://t.me/moviesandseriesforallwzn")])
+            keyboard.append([InlineKeyboardButton("🔞 လူကြီးသီးသန့်ချန်နယ်", url="https://t.me/everyboyhobby")])
             keyboard.append([InlineKeyboardButton("🎵 မြန်မာသီချင်းချန်နယ်", url="https://t.me/wznmusiclibary")])
 
             reply_markup = InlineKeyboardMarkup(keyboard)
@@ -274,7 +271,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "🎬 **မင်္ဂလာပါ**\n\n"
                 "ဤ Bot သည် Channel အတွက် ဇာတ်ကားများ ဖြန့်ဝေရန် သုံးပါသည်။\n"
                 "ဇာတ်ကားရယူရန် Channel ရှိ Post အောက်က ခလုတ်ကို နှိပ်ပါ။\n"
-                "ပထမဆုံး လိုအပ်သော Channel 4 ခုလုံးကို ဝင်ရောက်ထားရပါမည်။",
+                "ပထမဆုံး လိုအပ်သော Channel 3 ခုလုံးကို ဝင်ရောက်ထားရပါမည်။",
                 parse_mode="Markdown"
             )
 
@@ -405,18 +402,10 @@ async def receive_video_for_post(update: Update, context: ContextTypes.DEFAULT_T
         synopsis_url = context.user_data.get('telegraph_url')
         if synopsis_url:
             buttons.append([InlineKeyboardButton("📖 ဇာတ်ညွှန်းအပြည့်အစုံဖတ်ရန်", url=synopsis_url)])
-        if OTHER_CHANNELS:
-            for idx, link in enumerate(OTHER_CHANNELS, 1):
-                if idx == 1:
-                    buttons.append([InlineKeyboardButton("🎬 ဇာတ်ကားချန်နယ်", url=link)])
-                elif idx == 2:
-                    buttons.append([InlineKeyboardButton("👥 လူကြီးချန်နယ်", url=link)])
-                elif idx == 3:
-                    buttons.append([InlineKeyboardButton("🎵 မြန်မာသီချင်းချန်နယ်", url=link)])
-                else:
-                    buttons.append([InlineKeyboardButton(f"Channel {idx}", url=link)])
-        if MUSIC_CHANNEL_LINK:
-            buttons.append([InlineKeyboardButton("🎵 သီချင်း/တရားတော် 🙏", url=MUSIC_CHANNEL_LINK)])
+        # Add channel invite buttons with logos
+        buttons.append([InlineKeyboardButton("🎬 ဇာတ်ကားချန်နယ် (အရံ)", url="https://t.me/moviesandseriesforallwzn")])
+        buttons.append([InlineKeyboardButton("🔞 လူကြီးသီးသန့်ချန်နယ်", url="https://t.me/everyboyhobby")])
+        buttons.append([InlineKeyboardButton("🎵 မြန်မာသီချင်းချန်နယ်", url="https://t.me/wznmusiclibary")])
 
         reply_markup = InlineKeyboardMarkup(buttons)
 
@@ -473,7 +462,7 @@ async def handle_video_for_newfile(update: Update, context: ContextTypes.DEFAULT
                 await update.message.reply_text(
                     f"🔗 **သင်၏ Deep Link**\n\n{deep_link}\n\n"
                     f"ဤလင့်ကို နှိပ်လိုက်ရုံဖြင့် `{file_name}` ကို ရရှိမည်။\n"
-                    f"(Channel 4 ခုစလုံးဝင်ထားရန် လိုအပ်)"
+                    f"(Channel 3 ခုစလုံးဝင်ထားရန် လိုအပ်)"
                 )
             except Exception as e:
                 await update.message.reply_text(f"❌ Deep Link ထုတ်ရာတွင် အမှား: {str(e)}")
@@ -503,7 +492,7 @@ async def handle_video_for_link(update: Update, context: ContextTypes.DEFAULT_TY
                 await update.message.reply_text(
                     f"🔗 **သင်၏ Deep Link**\n\n{deep_link}\n\n"
                     f"ဤလင့်ကို နှိပ်လိုက်ရုံဖြင့် `{file_name}` ကို ရရှိမည်။\n"
-                    f"(Channel 4 ခုစလုံးဝင်ထားရန် လိုအပ်)"
+                    f"(Channel 3 ခုစလုံးဝင်ထားရန် လိုအပ်)"
                 )
             except Exception as e:
                 await update.message.reply_text(f"❌ Deep Link ထုတ်ရာတွင် အမှား: {str(e)}")
@@ -563,7 +552,7 @@ async def batchlink_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
         save_file_info(payload, v["file_id"], v["file_name"])
         deep_link = create_deep_linked_url(BOT_USERNAME, payload)
         results.append(f"• **{v['file_name']}**\n  {deep_link}\n")
-    response_text = "📦 **Batch Deep Links**\n\n" + "\n".join(results) + "\nဤလင့်များကို ကူးယူ၍ မျှဝေနိုင်ပါသည်။ (Channel 4 ခုလုံးဝင်ထားရန် လိုအပ်)"
+    response_text = "📦 **Batch Deep Links**\n\n" + "\n".join(results) + "\nဤလင့်များကို ကူးယူ၍ မျှဝေနိုင်ပါသည်။ (Channel 3 ခုလုံးဝင်ထားရန် လိုအပ်)"
     if len(response_text) > 4000:
         response_text = response_text[:4000] + "\n...(စာရင်းတိုသွားပါသည်)"
     await update.message.reply_text(response_text, parse_mode="Markdown", disable_web_page_preview=True)
@@ -704,7 +693,7 @@ async def test_channel_receive_id(update: Update, context: ContextTypes.DEFAULT_
         finally:
             context.user_data.pop('test_channel_mode', None)
 
-# ---------- /convert_old Command (ပြင်ဆင်ပြီး) ----------
+# ---------- /convert_old Command ----------
 async def convert_old(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("⛔ သင်သည် Admin မဟုတ်ပါ။")
@@ -750,7 +739,6 @@ async def convert_old(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 error_details.append(f"Post {idx}: Missing file_id or channel")
                 continue
 
-            # 🔧 FIX: အဓိက ပြင်ဆင်ချက် - string ဖြစ်နေရင် int ပြောင်းပါ
             if isinstance(target_channel_raw, str):
                 target_channel = int(target_channel_raw)
             else:
