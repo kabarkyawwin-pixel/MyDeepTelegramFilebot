@@ -1,12 +1,11 @@
 import os
 import asyncio
-import threading
 import logging
 import sys
 import secrets
 import re
 from datetime import datetime
-from flask import Flask
+from flask import Flask, request
 import requests
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters, CallbackQueryHandler
@@ -19,10 +18,6 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
-
-@app.route('/')
-def home():
-    return "Bot is running (polling mode)"
 
 # ---------- MongoDB ----------
 MONGO_URI = os.environ.get("MONGO_URI")
@@ -98,7 +93,6 @@ if not TOKEN:
 BOT_USERNAME = os.environ.get("BOT_USERNAME")
 if not BOT_USERNAME:
     logger.error("BOT_USERNAME not set! Deep links will not work.")
-    # အရေးကြီး: BOT_USERNAME မှာ @ မပါဘဲ ထည့်ပါ (ဥပမာ wznsendmovbot)
 
 ADMIN_IDS = [int(x.strip()) for x in os.environ.get("ADMIN_ID", "").split(",") if x.strip()]
 
@@ -115,17 +109,17 @@ def is_admin(user_id):
 def generate_payload():
     return secrets.token_urlsafe(16)
 
-async def is_member_of_channel(user_id, channel_id, context):
+async def is_member_of_channel(user_id, channel_id, bot):
     try:
-        member = await context.bot.get_chat_member(chat_id=channel_id, user_id=user_id)
+        member = await bot.get_chat_member(chat_id=channel_id, user_id=user_id)
         return member.status in ["member", "administrator", "creator"]
     except:
         return False
 
-async def check_all_channels(user_id, context):
+async def check_all_channels(user_id, bot):
     missing = []
     for ch in REQUIRED_CHANNELS:
-        if not await is_member_of_channel(user_id, ch["id"], context):
+        if not await is_member_of_channel(user_id, ch["id"], bot):
             missing.append(ch)
     return len(missing) == 0, missing
 
@@ -255,7 +249,7 @@ async def movie_command(update, context):
             keyboard.append([InlineKeyboardButton("📖 ဇာတ်ညွှန်းအပြည့်", url=url)])
     await msg.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard) if keyboard else None, disable_web_page_preview=True)
 
-# ========== /createpost (in-memory state) ==========
+# ========== /createpost ==========
 CREATE_STATES = {}
 
 async def createpost_command(update, context):
@@ -276,9 +270,7 @@ async def createpost_command(update, context):
 
 async def handle_poster(update, context):
     user_id = update.effective_user.id
-    if user_id not in CREATE_STATES:
-        return
-    if CREATE_STATES[user_id]['step'] != 'waiting_poster':
+    if user_id not in CREATE_STATES or CREATE_STATES[user_id]['step'] != 'waiting_poster':
         return
     if not update.message.photo:
         await update.message.reply_text("ကျေးဇူးပြု၍ Poster ပုံတစ်ပုံ ပို့ပေးပါ။")
@@ -289,9 +281,7 @@ async def handle_poster(update, context):
 
 async def handle_video_for_create(update, context):
     user_id = update.effective_user.id
-    if user_id not in CREATE_STATES:
-        return
-    if CREATE_STATES[user_id]['step'] != 'waiting_video':
+    if user_id not in CREATE_STATES or CREATE_STATES[user_id]['step'] != 'waiting_video':
         return
     video = None
     file_name = None
@@ -430,7 +420,7 @@ async def start(update, context):
         if is_user_blocked(user_id):
             await update.message.reply_text("🔒 သင်သည် block ခံထားရပါသည်။")
             return
-        ok, missing = await check_all_channels(user_id, context)
+        ok, missing = await check_all_channels(user_id, context.bot)
         if not ok:
             attempts = get_attempt_count(user_id) + 1
             increment_attempts(user_id)
@@ -444,11 +434,9 @@ async def start(update, context):
             msg += f"\n⚠️ သင်သည် ဤလင့်ကို **{attempts}/10** ကြိမ် နှိပ်ပြီးဖြစ်သည်။"
             await update.message.reply_text(msg, disable_web_page_preview=True)
             return
-        file_id = file_info["file_id"]
-        file_name = file_info["file_name"]
         try:
-            await update.message.reply_text(f"🎬 {file_name} ပို့ပေးနေပါပြီ...")
-            await context.bot.send_video(chat_id=user_id, video=file_id, caption=f"🎬 {file_name}")
+            await update.message.reply_text(f"🎬 {file_info['file_name']} ပို့ပေးနေပါပြီ...")
+            await context.bot.send_video(chat_id=user_id, video=file_info['file_id'], caption=f"🎬 {file_info['file_name']}")
             add_user(user_id)
             increment_requests()
             reset_attempts(user_id)
@@ -553,7 +541,6 @@ async def menu_command(update, context):
     else:
         await update.message.reply_text("Admin only")
 
-# ---------- Placeholders ----------
 async def channelpost(update, context): await update.message.reply_text("Not implemented yet")
 async def convert_old(update, context): await update.message.reply_text("Not implemented yet")
 async def test_channel(update, context): await update.message.reply_text("Not implemented yet")
@@ -563,7 +550,12 @@ async def cancelschedule(update, context): await update.message.reply_text("Not 
 async def delete_file(update, context): await update.message.reply_text("Not implemented yet")
 async def deleteall(update, context): await update.message.reply_text("Not implemented yet")
 
-# ---------- Application ----------
+# ---------- Webhook Setup ----------
+WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
+if not WEBHOOK_URL:
+    logger.error("WEBHOOK_URL not set. Please set it to https://your-app.onrender.com/webhook")
+    sys.exit(1)
+
 application = Application.builder().token(TOKEN).build()
 
 application.add_handler(CommandHandler("start", start))
@@ -592,13 +584,28 @@ application.add_handler(CommandHandler("delete", delete_file))
 application.add_handler(CommandHandler("deleteall", deleteall))
 application.add_handler(CallbackQueryHandler(menu_callback, pattern="menu_"))
 
-# ---------- Polling with correct asyncio ----------
-def run_flask():
+@app.route('/webhook', methods=['POST'])
+async def webhook():
+    if request.method == "POST":
+        update = Update.de_json(request.get_json(force=True), application.bot)
+        await application.process_update(update)
+        return "ok", 200
+
+def start_flask():
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, use_reloader=False)
 
+async def set_webhook():
+    await application.bot.set_webhook(WEBHOOK_URL)
+    logger.info(f"Webhook set to {WEBHOOK_URL}")
+
 if __name__ == "__main__":
-    # Flask ကို thread နဲ့ run
-    threading.Thread(target=run_flask, daemon=True).start()
-    # polling ကို asyncio နဲ့ မှန်မှန်ကန်ကန် run
-    asyncio.run(application.run_polling())
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(application.initialize())
+    loop.run_until_complete(set_webhook())
+    threading.Thread(target=start_flask, daemon=True).start()
+    try:
+        loop.run_forever()
+    except KeyboardInterrupt:
+        loop.run_until_complete(application.shutdown())
