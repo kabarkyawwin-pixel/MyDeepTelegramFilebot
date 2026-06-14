@@ -7,9 +7,11 @@ import secrets
 import json
 from datetime import datetime
 from flask import Flask
+import requests
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, ContextTypes, ConversationHandler, MessageHandler, filters, CallbackQueryHandler
 from telegram.helpers import create_deep_linked_url
+from telegram.error import RetryAfter
 from pymongo import MongoClient
 from telegraph import Telegraph
 
@@ -169,114 +171,167 @@ async def create_telegraph_page(title: str, content_text: str) -> str:
         logger.error(f"Telegraph error: {e}")
         return None
 
-# ---------- Start & Deep Link Handler ----------
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ========== NEW: OMDb Movie Info Functions ==========
+OMDB_API_KEY = "5025f95c"   # <-- user provided key
+MOVIE_WATCH_CHANNEL = os.environ.get("MOVIE_WATCH_CHANNEL", "yourmoviechannel")  # e.g., "wznmoviescollector"
+
+def get_movie_info(movie_name):
+    """Fetch movie details from OMDb API"""
+    url = f"http://www.omdbapi.com/?t={movie_name}&apikey={OMDB_API_KEY}&plot=full"
+    try:
+        response = requests.get(url, timeout=10)
+        data = response.json()
+        if data.get('Response') == 'False':
+            logger.warning(f"OMDb not found: {movie_name}")
+            return None
+        return {
+            'title': data.get('Title', 'N/A'),
+            'year': data.get('Year', 'N/A'),
+            'rated': data.get('Rated', 'N/A'),
+            'released': data.get('Released', 'N/A'),
+            'runtime': data.get('Runtime', 'N/A'),
+            'genre': data.get('Genre', 'N/A'),
+            'director': data.get('Director', 'N/A'),
+            'actors': data.get('Actors', 'N/A'),
+            'plot': data.get('Plot', 'N/A'),
+            'language': data.get('Language', 'N/A'),
+            'country': data.get('Country', 'N/A'),
+            'poster': data.get('Poster', 'N/A'),
+            'imdb_rating': data.get('imdbRating', 'N/A'),
+            'imdb_votes': data.get('imdbVotes', 'N/A'),
+            'imdb_id': data.get('imdbID', 'N/A'),
+        }
+    except Exception as e:
+        logger.error(f"OMDb error: {e}")
+        return None
+
+def format_movie_info_burmese(movie):
+    """Format movie info in Burmese-friendly Markdown"""
+    try:
+        rating = float(movie['imdb_rating'])
+        stars = '⭐' * int(rating // 2) + ('✨' if rating % 2 >= 0.5 else '')
+    except:
+        stars = ''
+    text = f"""🎬 **{movie['title']}** ({movie['year']})
+
+📝 **အမျိုးအစား:** {movie['genre']}
+🎭 **သရုပ်ဆောင်များ:** {movie['actors']}
+🎥 **ဒါရိုက်တာ:** {movie['director']}
+⏱️ **ကြာချိန်:** {movie['runtime']}
+🌍 **နိုင်ငံ:** {movie['country']}
+🗣️ **ဘာသာစကား:** {movie['language']}
+⭐ **IMDb အဆင့်:** {movie['imdb_rating']}/10  {stars}
+🗳️ **မဲအရေအတွက်:** {movie['imdb_votes']}
+
+📖 **ဇာတ်လမ်းအကျဉ်း:**
+{movie['plot']}
+
+🔗 **IMDb Link:** https://www.imdb.com/title/{movie['imdb_id']}/
+"""
+    return text
+
+async def create_telegraph_page_movie(title, content_text):
+    """Create telegraph page specifically for long synopsis"""
+    try:
+        html_content = content_text.replace('\n', '<br>')
+        response = await asyncio.to_thread(
+            telegraph.create_page,
+            title=title,
+            html_content=f"<p>{html_content}</p>",
+            author_name="Movie Info Bot"
+        )
+        return response['url']
+    except Exception as e:
+        logger.error(f"Telegraph movie page error: {e}")
+        return None
+
+async def send_with_retry(context, chat_id, **kwargs):
+    """Handle flood control gracefully"""
+    try:
+        return await context.bot.send_message(chat_id=chat_id, **kwargs)
+    except RetryAfter as e:
+        wait_time = e.retry_after
+        logger.warning(f"Flood control exceeded. Retrying in {wait_time} seconds.")
+        await asyncio.sleep(wait_time)
+        return await context.bot.send_message(chat_id=chat_id, **kwargs)
+
+async def send_movie_info(update: Update, context: ContextTypes.DEFAULT_TYPE, movie_name: str):
+    """Core function to fetch and send movie info"""
     user_id = update.effective_user.id
-
-    if context.args and len(context.args) > 0:
-        payload = context.args[0]
-        file_info = get_file_info(payload)
-        if not file_info:
-            await update.message.reply_text("❌ ဤလင့်သည် မမှန်ကန်ပါ သို့မဟုတ် သက်တမ်းကုန်သွားပါပြီ။")
-            return
-
-        if is_user_blocked(user_id):
-            await update.message.reply_text(
-                "🔒 လူကြီးမင်းသည် ချန်နယ်များကို မဝင်ဘဲ လင့်ကို ၁၀ ကြိမ်အထက်နှိပ်ထားသည့်အတွက် ကျွန်ုပ်က block လုပ်ထားပါသည်။\n"
-                "ကျေးဇူးပြု၍ လိုအပ်သော ချန်နယ်များအားလုံးကို ဝင်ပြီးနောက် ကျွန်ုပ်ထံ ဆက်သွယ်ပါ။"
-            )
-            return
-
-        all_joined, missing = await check_all_channels(user_id, context)
-        if not all_joined:
-            increment_attempts(user_id)
-            attempts = get_attempt_count(user_id)
-            remaining = 10 - attempts
-
-            msg = "🎬 **ဇာတ်ကားဖိုင်ကို ဒေါင်းလုဒ်လုပ်ရန် အောက်ပါ Channel များအားလုံးကို ဝင်ထားပေးပါနော်**\n\n"
-            for ch in REQUIRED_CHANNELS:
-                msg += f"• **{ch['name']}**\n"
-                msg += f"  👉 [ဝင်ရန် နှိပ်ပါ]({ch['invite']})\n\n"
-            msg += f"⚠️ သင်သည် ဤလင့်ကို **{attempts}/10** ကြိမ် နှိပ်ပြီးဖြစ်သည်။ {remaining} ကြိမ်သာ ကျန်ပါသေးသည်။\n"
-            msg += "Channel များအားလုံးဝင်ပြီးနောက် လင့်ကို ထပ်မံနှိပ်ပါ။"
-
-            await update.message.reply_text(msg, parse_mode="Markdown", disable_web_page_preview=True)
-
-            if attempts >= 10:
-                block_user(user_id)
-                block_msg = (
-                    "🚫 **လူကြီးမင်းသည် ချန်နယ်ကို မဝင်ဘဲ ဇာတ်ကားလင့်ကို ၁၀ ကြိမ်နှိပ်လိုက်သည့်အတွက် ဇာတ်ကားရယူနိုင်မည် မဟုတ်ပါ။**\n\n"
-                    "ဝမ်းနည်းပါတယ်ရှင့် လူကြီးမင်းကို ကျွန်ုပ်၏ဘက်မှ block လိုက်ပါသည်။\n"
-                    "သာယာပျော်ရွင်သောနေ့လေးဖြစ်ပါစေ 🙏🙏🙏"
-                )
-                await update.message.reply_text(block_msg)
-            return
-
-        if is_user_blocked(user_id):
-            unblock_user(user_id)
-            await update.message.reply_text("✅ သင်သည် လိုအပ်သောချန်နယ်များအားလုံးကို ဝင်ရောက်ထားပြီးဖြစ်သောကြောင့် သင့်အား unblock လုပ်လိုက်ပါသည်။")
-
-        file_id = file_info["file_id"]
-        file_name = file_info["file_name"]
-
-        try:
-            await update.message.reply_text(f"🎬 {file_name} ပို့ပေးနေပါပြီ...")
-            video_msg = await context.bot.send_video(
+    await send_with_retry(context, user_id, text=f"🔍 '{movie_name}' ကို ရှာဖွေနေပါသည်... ခေတ္တစောင့်ပါ။")
+    
+    movie = get_movie_info(movie_name)
+    if not movie:
+        await send_with_retry(context, user_id, text="❌ ဇာတ်ကားကို ရှာမတွေ့ပါ။ ကျေးဇူးပြု၍ အင်္ဂလိပ်အမည်အပြည့်အစုံ ထည့်ပေးပါ။")
+        return
+    
+    formatted_text = format_movie_info_burmese(movie)
+    keyboard = []
+    
+    # If plot is long (>1024 chars), create telegraph page
+    if len(movie['plot']) > 1024:
+        telegraph_url = await create_telegraph_page_movie(
+            f"{movie['title']} ({movie['year']}) - ဇာတ်လမ်းအကျဉ်း",
+            movie['plot']
+        )
+        if telegraph_url:
+            keyboard.append([InlineKeyboardButton("📖 ဇာတ်လမ်းအကျဉ်း အပြည့်ဖတ်ရန်", url=telegraph_url)])
+    
+    # Add watch button (deep link to your movie channel)
+    deeplink = f"tg://resolve?domain={MOVIE_WATCH_CHANNEL}&start=movie_{movie['imdb_id']}"
+    keyboard.append([InlineKeyboardButton("🎬 ဇာတ်ကားကြည့်ရှုရန်", url=deeplink)])
+    
+    reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
+    
+    # Try to send with poster if available
+    try:
+        if movie['poster'] and movie['poster'] != 'N/A':
+            await context.bot.send_photo(
                 chat_id=user_id,
-                video=file_id,
-                caption=f"🎬 သင့်ဇာတ်ကား - {file_name}"
+                photo=movie['poster'],
+                caption=formatted_text,
+                parse_mode='Markdown',
+                reply_markup=reply_markup
             )
-            warning_text = (
-                "⚠️ ⚠️ ⚠️ အရေးကြီးပါတယ် ⚠️ ⚠️ ⚠️\n\n"
-                "ဤရုပ်ရှင်ဖိုင်များ/ဗီဒီယိုများကို 5 မိနစ်အတွင်း (မူပိုင်ခွင့်ပြဿနာများကြောင့်) ဖျက်ပါမည်။\n\n"
-                "ကျေးဇူးပြု၍ ဤဖိုင်များ/ဗီဒီယိုများအားလုံးကို သင်၏ Saved Messages များသို့ Forward လုပ်ပြီး ထိုနေရာတွင် ဇာတ်ကားအား ကြည့်ရှုပါ။\n\n"
-                "ကျွန်ုပ်၏ Channel ကို လာရောက်အားပေးမှုအတွက် ကျေးဇူးအထူးတင်ပါတယ် 🙏🙏🙏\n\n"
-                "Channel ရေရှည်တည်တံ့ဖို့အတွက် Support ပေးချင်ပါက Wave Pay (09767011991) ကို ကူညီနိုင်ပါတယ်။\n\n"
-                "အားလုံးကို ကျေးဇူးတင်ပါတယ်။\n\n!!! IMPORTANT !!!\n"
-                "This Movie Files/Videos will be deleted in 5 mins (Due to Copyright Issues).\n"
-                "Please forward these ALL Files/Videos to your Saved Messages and start downloading there."
-            )
-            warn_msg = await context.bot.send_message(chat_id=user_id, text=warning_text)
-
-            async def delete_after():
-                await asyncio.sleep(300)
-                try:
-                    await context.bot.delete_message(chat_id=user_id, message_id=warn_msg.message_id)
-                    await context.bot.delete_message(chat_id=user_id, message_id=video_msg.message_id)
-                except:
-                    pass
-            asyncio.create_task(delete_after())
-
-            add_user(user_id)
-            increment_requests()
-            reset_attempts(user_id)
-
-            # Fixed Channel Invite Buttons
-            keyboard = []
-            keyboard.append([InlineKeyboardButton("🎬 ဇာတ်ကားချန်နယ်", url="https://t.me/moviesandseriesforallwzn")])
-            keyboard.append([InlineKeyboardButton("👥 လူကြီးချန်နယ်", url="https://t.me/everyboyhobby")])
-            keyboard.append([InlineKeyboardButton("🎵 မြန်မာသီချင်းချန်နယ်", url="https://t.me/wznmusiclibary")])
-
-            reply_markup = InlineKeyboardMarkup(keyboard)
+        else:
             await context.bot.send_message(
                 chat_id=user_id,
-                text="🎉 **အခြားဇာတ်ကားများအတွက် အောက်ပါ Channel များသို့ ဝင်ရောက်ပါ**",
+                text=formatted_text,
+                parse_mode='Markdown',
                 reply_markup=reply_markup,
-                parse_mode="Markdown"
+                disable_web_page_preview=True
             )
-        except Exception as e:
-            await context.bot.send_message(chat_id=user_id, text=f"❌ Video ပို့ရာတွင် အမှား: {str(e)}")
-    else:
-        if is_admin(user_id):
-            await show_menu(update, context)
-        else:
-            await update.message.reply_text(
-                "🎬 **မင်္ဂလာပါ**\n\n"
-                "ဤ Bot သည် Channel အတွက် ဇာတ်ကားများ ဖြန့်ဝေရန် သုံးပါသည်။\n"
-                "ဇာတ်ကားရယူရန် Channel ရှိ Post အောက်က ခလုတ်ကို နှိပ်ပါ။\n"
-                "ပထမဆုံး လိုအပ်သော Channel 4 ခုလုံးကို ဝင်ရောက်ထားရပါမည်။",
-                parse_mode="Markdown"
-            )
+    except Exception as e:
+        logger.error(f"Error sending movie info: {e}")
+        await context.bot.send_message(
+            chat_id=user_id,
+            text=formatted_text,
+            parse_mode='Markdown',
+            reply_markup=reply_markup,
+            disable_web_page_preview=True
+        )
+
+# ========== NEW: /movie Command ==========
+async def movie_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /movie <movie_name>"""
+    if not context.args:
+        await update.message.reply_text("ဥပမာ - `/movie Inception`", parse_mode="Markdown")
+        return
+    movie_name = ' '.join(context.args)
+    await send_movie_info(update, context, movie_name)
+
+# ========== NEW: Handle photo with caption as movie name ==========
+async def handle_photo_movie(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """If a photo is sent with a caption, treat caption as movie name"""
+    # Skip if the photo is part of admin newpost conversation (check user_data)
+    if context.user_data.get('waiting_for_newfile') or context.user_data.get('waiting_for_link'):
+        # Let existing handlers process
+        return
+    if not update.message.caption:
+        await update.message.reply_text("📌 ဇာတ်ကားအမည်ကို Caption အနေနဲ့ ထည့်ပေးပါ။")
+        return
+    movie_name = update.message.caption.strip()
+    await send_movie_info(update, context, movie_name)
 
 # ---------- Admin Menu ----------
 async def show_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -750,13 +805,11 @@ async def convert_old(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 error_details.append(f"Post {idx}: Missing file_id or channel")
                 continue
 
-            # ========== အဓိက ပြင်ဆင်ချက် ==========
             # channel ID ကို integer အနေနဲ့ သေချာပြောင်းပါ
             if isinstance(target_channel_raw, str):
                 target_channel = int(target_channel_raw)
             else:
                 target_channel = target_channel_raw
-            # =======================================
 
             # Generate Deep Link
             payload = generate_payload()
@@ -962,6 +1015,10 @@ application.add_handler(CommandHandler("convert_old", convert_old))
 application.add_handler(CommandHandler("test_channel", test_channel))
 application.add_handler(MessageHandler(filters.TEXT & filters.ChatType.PRIVATE & ~filters.COMMAND, test_channel_receive_id))
 application.add_handler(CallbackQueryHandler(menu_callback, pattern="menu_"))
+
+# NEW HANDLERS
+application.add_handler(CommandHandler("movie", movie_command))
+application.add_handler(MessageHandler(filters.PHOTO & ~filters.COMMAND, handle_photo_movie), group=1)
 
 # ---------- Polling ----------
 def run_bot():
