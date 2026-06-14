@@ -377,24 +377,29 @@ async def createpost_receive_movie_name(update: Update, context: ContextTypes.DE
     await update.message.reply_text("🎬 ယခု ဇာတ်ကား Video ဖိုင်ကို ပို့ပေးပါ။")
     return CREATE_VIDEO
 
+# ---------- FIXED VIDEO RECEIVER ----------
 async def createpost_receive_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """ပို့လိုက်တဲ့ video ကို မှန်မှန်ကန်ကန် detect လုပ်ပြီး post ထုတ်ပေးမယ်"""
     video = None
     file_name = None
     
-    # Video as VIDEO
+    # Telegram ၏ native video အဖြစ်ပို့ပါက
     if update.message.video:
         video = update.message.video
         file_name = video.file_name or f"movie_{video.file_unique_id}"
-        logger.info(f"Received VIDEO: id={video.file_id}, name={file_name}")
-    # Video as DOCUMENT
+        logger.info(f"✅ VIDEO detected: id={video.file_id}, name={file_name}")
+    
+    # Document အဖြစ်ပို့ထားသော video ဖိုင်ဖြစ်ပါက
     elif update.message.document:
         doc = update.message.document
         mime = doc.mime_type or ''
-        if mime.startswith('video/') or doc.file_name.lower().endswith(('.mp4', '.mkv', '.avi', '.mov', '.webm')):
+        # mime type သို့မဟုတ် file extension စစ်ဆေးခြင်း
+        if mime.startswith('video/') or (doc.file_name and doc.file_name.lower().endswith(('.mp4', '.mkv', '.avi', '.mov', '.webm'))):
             video = doc
             file_name = doc.file_name or f"movie_{doc.file_unique_id}"
-            logger.info(f"Received DOCUMENT video: id={doc.file_id}, name={file_name}, mime={mime}")
+            logger.info(f"✅ DOCUMENT video detected: id={doc.file_id}, name={file_name}, mime={mime}")
         else:
+            logger.warning(f"❌ Not a video: mime={mime}, name={doc.file_name}")
             await update.message.reply_text("❌ ကျေးဇူးပြု၍ Video ဖိုင် (mp4, mkv, avi, mov, webm) သာ ပို့ပေးပါ။")
             return CREATE_VIDEO
     
@@ -403,13 +408,13 @@ async def createpost_receive_video(update: Update, context: ContextTypes.DEFAULT
         return CREATE_VIDEO
     
     if not BOT_USERNAME:
-        await update.message.reply_text("❌ BOT_USERNAME မသတ်မှတ်ထားပါ။ Admin ကို ဆက်သွယ်ပါ။")
+        await update.message.reply_text("❌ BOT_USERNAME environment variable မသတ်မှတ်ထားပါ။ Admin ကို ဆက်သွယ်ပါ။")
         return ConversationHandler.END
     
     payload = generate_payload()
     save_file_info(payload, video.file_id, file_name)
     deep_link = create_deep_linked_url(BOT_USERNAME, payload)
-    logger.info(f"Deep link created: {deep_link}")
+    logger.info(f"✅ Deep link created: {deep_link}")
     
     poster = context.user_data.get('createpost_poster')
     movie = context.user_data.get('createpost_movie_data')
@@ -570,13 +575,14 @@ async def handle_video_for_newfile(update: Update, context: ContextTypes.DEFAULT
     if not context.user_data.get('waiting_for_newfile'):
         return
     video = None
+    file_name = None
     if update.message.video:
         video = update.message.video
         file_name = video.file_name or "movie"
     elif update.message.document:
         doc = update.message.document
         mime = doc.mime_type or ''
-        if mime.startswith('video/') or doc.file_name.lower().endswith(('.mp4', '.mkv', '.avi', '.mov', '.webm')):
+        if mime.startswith('video/') or (doc.file_name and doc.file_name.lower().endswith(('.mp4', '.mkv', '.avi', '.mov', '.webm'))):
             video = doc
             file_name = doc.file_name or "movie"
     if not video:
@@ -609,13 +615,14 @@ async def batchlink_receive_video(update: Update, context: ContextTypes.DEFAULT_
         await update.message.reply_text("/batchlink ဖြင့် စတင်ပါ။")
         return
     video = None
+    file_name = None
     if update.message.video:
         video = update.message.video
         file_name = video.file_name or "movie"
     elif update.message.document:
         doc = update.message.document
         mime = doc.mime_type or ''
-        if mime.startswith('video/') or doc.file_name.lower().endswith(('.mp4', '.mkv', '.avi', '.mov', '.webm')):
+        if mime.startswith('video/') or (doc.file_name and doc.file_name.lower().endswith(('.mp4', '.mkv', '.avi', '.mov', '.webm'))):
             video = doc
             file_name = doc.file_name or "movie"
     if not video:
@@ -680,7 +687,7 @@ async def channelpost_receive_video(update: Update, context: ContextTypes.DEFAUL
     elif update.message.document:
         doc = update.message.document
         mime = doc.mime_type or ''
-        if mime.startswith('video/') or doc.file_name.lower().endswith(('.mp4', '.mkv', '.avi', '.mov', '.webm')):
+        if mime.startswith('video/') or (doc.file_name and doc.file_name.lower().endswith(('.mp4', '.mkv', '.avi', '.mov', '.webm'))):
             video = doc
     if not video:
         await update.message.reply_text("Video ဖိုင်တစ်ခု ပို့ပေးပါ။")
@@ -827,7 +834,8 @@ application.add_handler(CommandHandler("start", start))
 application.add_handler(CommandHandler("movie", movie_command))
 application.add_handler(createpost_handler)
 application.add_handler(CommandHandler("newfile", newfile_command))
-application.add_handler(MessageHandler(filters.VIDEO | filters.Document.ALL, handle_video_for_newfile))
+# IMPORTANT: ဒီ handler က createpost conversation အတွင်းမှာ video ကို မယှက်အောင် ထားရန်
+application.add_handler(MessageHandler(filters.VIDEO | filters.Document.ALL & ~filters.COMMAND, handle_video_for_newfile))
 application.add_handler(CommandHandler("link", link_command))
 application.add_handler(batchlink_handler)
 application.add_handler(channelpost_handler)
