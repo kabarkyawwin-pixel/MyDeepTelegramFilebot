@@ -412,27 +412,18 @@ async def receive_video_for_post(update: Update, context: ContextTypes.DEFAULT_T
             await update.message.reply_text("ပုံ မတွေ့ပါ။ /newpost ကို ထပ်မံစတင်ပါ။")
             return ConversationHandler.END
 
-        # ========== FIX: Safe caption handling ==========
-        # Clean caption - remove any markdown special chars that might cause parse errors
-        def clean_text(text):
-            # Remove markdown special characters that might cause parse errors
-            # But keep basic text
-            return text
-        
+        # ========== FIX: Safe caption handling (NO parse_mode) ==========
         if telegraph_url:
-            # If we have telegraph, send short preview + telegraph link
             preview = caption_full[:300] + "..." if len(caption_full) > 300 else caption_full
-            photo_caption = f"📝 ဇာတ်ကားအကျဉ်းချုပ်\n\n{preview}\n\n📖 [ဇာတ်ညွှန်းအပြည့်အစုံဖတ်ရန်]({telegraph_url})"
-            # Use Markdown for the link
-            await update.message.reply_photo(photo=poster, caption=photo_caption, reply_markup=reply_markup, parse_mode="Markdown")
+            photo_caption = f"📝 ဇာတ်ကားအကျဉ်းချုပ်\n\n{preview}\n\n📖 ဇာတ်ညွှန်းအပြည့်အစုံဖတ်ရန်: {telegraph_url}"
         else:
-            # No telegraph - truncate to safe limit (900 chars to be safe)
             if len(caption_full) > 900:
                 photo_caption = f"📝 ဇာတ်ကားအကြောင်း\n\n{caption_full[:897]}..."
             else:
                 photo_caption = f"📝 ဇာတ်ကားအကြောင်း\n\n{caption_full}"
-            # Send without parse_mode to avoid markdown errors
-            await update.message.reply_photo(photo=poster, caption=photo_caption, reply_markup=reply_markup)
+
+        # Send WITHOUT parse_mode to avoid markdown errors
+        await update.message.reply_photo(photo=poster, caption=photo_caption, reply_markup=reply_markup)
 
         await update.message.reply_text(
             f"**Deep Link (ဇာတ်ကားရယူရန်):**\n{deep_link}\n\n"
@@ -643,11 +634,9 @@ async def channelpost_receive_video(update: Update, context: ContextTypes.DEFAUL
 
         if telegraph_url:
             preview = raw_caption[:300] + "..." if len(raw_caption) > 300 else raw_caption
-            final_caption = f"{preview}\n\n📖 [ဇာတ်ညွှန်းအပြည့်အစုံဖတ်ရန်]({telegraph_url})"
-            parse_mode = "Markdown"
+            final_caption = f"{preview}\n\n📖 ဇာတ်ညွှန်းအပြည့်အစုံဖတ်ရန်: {telegraph_url}"
         else:
             final_caption = raw_caption
-            parse_mode = None
 
         success_count = 0
         for channel in POST_CHANNELS:
@@ -656,8 +645,7 @@ async def channelpost_receive_video(update: Update, context: ContextTypes.DEFAUL
                     chat_id=channel,
                     photo=photo_id,
                     caption=final_caption,
-                    reply_markup=reply_markup,
-                    parse_mode=parse_mode
+                    reply_markup=reply_markup
                 )
                 success_count += 1
                 logger.info(f"Posted to channel {channel}")
