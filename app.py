@@ -417,11 +417,17 @@ async def receive_video_for_post(update: Update, context: ContextTypes.DEFAULT_T
             await update.message.reply_text("ပုံ မတွေ့ပါ။ /newpost ကို ထပ်မံစတင်ပါ။")
             return ConversationHandler.END
 
+        # ---- FIX: Ensure caption is not too long for Telegram ----
         if telegraph_url:
+            # If we have a telegraph link, send only a short preview (max 300 chars)
             preview = caption_full[:300] + "..." if len(caption_full) > 300 else caption_full
             photo_caption = f"📝 ဇာတ်ကားအကျဉ်းချုပ်\n\n{preview}"
         else:
-            photo_caption = f"📝 ဇာတ်ကားအကြောင်း\n\n{caption_full}"
+            # If no telegraph, truncate to 1024 characters (Telegram limit)
+            if len(caption_full) > 1024:
+                photo_caption = f"📝 ဇာတ်ကားအကြောင်း\n\n{caption_full[:1020]}..."
+            else:
+                photo_caption = f"📝 ဇာတ်ကားအကြောင်း\n\n{caption_full}"
 
         await update.message.reply_photo(photo=poster, caption=photo_caption, reply_markup=reply_markup)
         await update.message.reply_text(
