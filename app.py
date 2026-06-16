@@ -412,10 +412,10 @@ async def receive_video_for_post(update: Update, context: ContextTypes.DEFAULT_T
             await update.message.reply_text("ပုံ မတွေ့ပါ။ /newpost ကို ထပ်မံစတင်ပါ။")
             return ConversationHandler.END
 
-        # ========== FIX: Safe caption handling (NO parse_mode) ==========
+        # ========== FIX: Telegraph link only in button, NOT in caption ==========
         if telegraph_url:
             preview = caption_full[:300] + "..." if len(caption_full) > 300 else caption_full
-            photo_caption = f"📝 ဇာတ်ကားအကျဉ်းချုပ်\n\n{preview}\n\n📖 ဇာတ်ညွှန်းအပြည့်အစုံဖတ်ရန်: {telegraph_url}"
+            photo_caption = f"📝 ဇာတ်ကားအကျဉ်းချုပ်\n\n{preview}"
         else:
             if len(caption_full) > 900:
                 photo_caption = f"📝 ဇာတ်ကားအကြောင်း\n\n{caption_full[:897]}..."
