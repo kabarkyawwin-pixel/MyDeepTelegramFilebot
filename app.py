@@ -567,15 +567,10 @@ async def cancel_batchlink(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
     return ConversationHandler.END
 
-# ---------- /channelpost Command ----------
-CHANNELPOST_PHOTO, CHANNELPOST_VIDEO = range(2)
-
+# ========== FIXED /channelpost ==========
 async def channelpost_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("⛔ သင်သည် Admin မဟုတ်ပါ။")
-        return ConversationHandler.END
-    if not POST_CHANNELS:
-        await update.message.reply_text("❌ POST_CHANNELS environment variable not set. Please configure target channels first.")
         return ConversationHandler.END
     await update.message.reply_text("📸 **ပုံနှင့် စာသား (Caption) တစ်ခါတည်း ပို့ပေးပါ။**\n\n(စာသားရှည်ပါက Telegraph ဖြင့် အလိုအလျောက် တင်ပေးပါမည်)\n\nဖျက်သိမ်းရန် `/cancel` ရိုက်ပါ။")
     return CHANNELPOST_PHOTO
@@ -612,58 +607,67 @@ async def channelpost_receive_video(update: Update, context: ContextTypes.DEFAUL
         video = update.message.video
     elif update.message.document and update.message.document.mime_type.startswith('video/'):
         video = update.message.document
+
     if not video:
         await update.message.reply_text("❌ Video file တစ်ခု ပို့ပေးပါ (video file သို့မဟုတ် video document)")
         return CHANNELPOST_VIDEO
+
     try:
         file_name = getattr(video, 'file_name', None)
         if not file_name:
             file_name = "ဇာတ်ကား"
+
         payload = generate_payload()
         save_file_info(payload, video.file_id, file_name)
         deep_link = create_deep_linked_url(BOT_USERNAME, payload)
-        button = InlineKeyboardButton("🎬 ဇာတ်ကားရယူရန်", url=deep_link)
-        reply_markup = InlineKeyboardMarkup([[button]])
+
+        # Create buttons
+        buttons = []
+        buttons.append([InlineKeyboardButton("🎬 ဇာတ်ကားရယူရန်", url=deep_link)])
+        synopsis_url = context.user_data.get('channelpost_telegraph_url')
+        if synopsis_url:
+            buttons.append([InlineKeyboardButton("📖 ဇာတ်ညွှန်းအပြည့်အစုံဖတ်ရန်", url=synopsis_url)])
+        buttons.append([InlineKeyboardButton("🎬 ဇာတ်ကားချန်နယ် (အရံ)", url="https://t.me/moviesandseriesforallwzn")])
+        buttons.append([InlineKeyboardButton("🔞 လူကြီးသီးသန့်ချန်နယ်", url="https://t.me/everyboyhobby")])
+        buttons.append([InlineKeyboardButton("🎵 မြန်မာသီချင်းချန်နယ်", url="https://t.me/wznmusiclibary")])
+
+        reply_markup = InlineKeyboardMarkup(buttons)
 
         photo_id = context.user_data.get('channelpost_photo')
         raw_caption = context.user_data.get('channelpost_raw_caption', '')
         telegraph_url = context.user_data.get('channelpost_telegraph_url')
+
         if not photo_id:
             await update.message.reply_text("ပုံ မတွေ့ပါ။ /channelpost ကို ထပ်စမ်းပါ။")
             return ConversationHandler.END
 
+        # Prepare caption
         if telegraph_url:
             preview = raw_caption[:300] + "..." if len(raw_caption) > 300 else raw_caption
             final_caption = f"{preview}\n\n📖 ဇာတ်ညွှန်းအပြည့်အစုံဖတ်ရန်: {telegraph_url}"
         else:
             final_caption = raw_caption
 
-        success_count = 0
-        for channel in POST_CHANNELS:
-            try:
-                await context.bot.send_photo(
-                    chat_id=channel,
-                    photo=photo_id,
-                    caption=final_caption,
-                    reply_markup=reply_markup
-                )
-                success_count += 1
-                logger.info(f"Posted to channel {channel}")
-                await asyncio.sleep(1)
-            except Exception as e:
-                logger.error(f"Failed to post to channel {channel}: {e}")
+        # Send the completed post to the Admin only (not to channels)
+        await update.message.reply_photo(
+            photo=photo_id,
+            caption=final_caption,
+            reply_markup=reply_markup
+        )
+
         await update.message.reply_text(
-            f"✅ **Post တင်ခြင်း ပြီးဆုံးပါပြီ။**\n\n"
-            f"**အောင်မြင်သော Channel:** {success_count}/{len(POST_CHANNELS)}\n"
-            f"**ဖိုင်အမည်:** {file_name}\n"
+            f"✅ **Post ပြင်ဆင်ပြီးပါပြီ။**\n\n"
+            f"ဤ Post ကို သင့် Channel သို့ Forward လုပ်ပါ။\n\n"
             f"**Deep Link:**\n{deep_link}"
         )
-    except Exception as e:
-        await update.message.reply_text(f"❌ Post တင်ရာတွင် အမှား: {str(e)}")
-        logger.exception("Error in channelpost_receive_video")
-    finally:
+
         context.user_data.clear()
-    return ConversationHandler.END
+        return ConversationHandler.END
+
+    except Exception as e:
+        await update.message.reply_text(f"❌ Post ဖန်တီးရာတွင် အမှား: {str(e)}")
+        logger.exception("Error in channelpost_receive_video")
+        return ConversationHandler.END
 
 async def cancel_channelpost(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("လုပ်ဆောင်ချက် ပယ်ဖျက်ပြီးပါပြီ။")
