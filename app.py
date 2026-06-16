@@ -110,10 +110,8 @@ TOKEN = os.environ.get("TELEGRAM_TOKEN")
 BOT_USERNAME = os.environ.get("BOT_USERNAME")
 ADMIN_IDS = [int(id.strip()) for id in os.environ.get("ADMIN_ID", "").split(",") if id.strip()] if os.environ.get("ADMIN_ID") else []
 
-# Channels to post when using /channelpost
 POST_CHANNELS = [ch.strip() for ch in os.environ.get("POST_CHANNELS", "").split(",") if ch.strip()] if os.environ.get("POST_CHANNELS") else []
 
-# Required Channels (3 channels with logos)
 REQUIRED_CHANNELS = [
     {"id": "-1003899625672", "name": "🎬 ဇာတ်ကားချန်နယ် (အရံ)", "invite": "https://t.me/moviesandseriesforallwzn"},
     {"id": "-1003792838735", "name": "🔞 လူကြီးများအတွက် သီးသန့်ချန်နယ် (ကလေးများမဝင်ရ)", "invite": "https://t.me/everyboyhobby"},
@@ -248,7 +246,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             increment_requests()
             reset_attempts(user_id)
 
-            # Channel Invite Buttons with logos
             keyboard = []
             keyboard.append([InlineKeyboardButton("🎬 ဇာတ်ကားချန်နယ် (အရံ)", url="https://t.me/moviesandseriesforallwzn")])
             keyboard.append([InlineKeyboardButton("🔞 လူကြီးသီးသန့်ချန်နယ်", url="https://t.me/everyboyhobby")])
@@ -371,8 +368,6 @@ async def receive_caption(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             logger.error(f"Telegraph error: {e}")
             await update.message.reply_text("❌ Telegraph စာမျက်နှာ ဖန်တီးရာတွင် ချို့ယွင်းချက်ရှိသည်။")
-    else:
-        pass
 
     await update.message.reply_text("🎬 Video File ကို ပို့ပေးပါ...")
     return VIDEO_FILE
@@ -402,7 +397,6 @@ async def receive_video_for_post(update: Update, context: ContextTypes.DEFAULT_T
         synopsis_url = context.user_data.get('telegraph_url')
         if synopsis_url:
             buttons.append([InlineKeyboardButton("📖 ဇာတ်ညွှန်းအပြည့်အစုံဖတ်ရန်", url=synopsis_url)])
-        # Add channel invite buttons with logos
         buttons.append([InlineKeyboardButton("🎬 ဇာတ်ကားချန်နယ် (အရံ)", url="https://t.me/moviesandseriesforallwzn")])
         buttons.append([InlineKeyboardButton("🔞 လူကြီးသီးသန့်ချန်နယ်", url="https://t.me/everyboyhobby")])
         buttons.append([InlineKeyboardButton("🎵 မြန်မာသီချင်းချန်နယ်", url="https://t.me/wznmusiclibary")])
