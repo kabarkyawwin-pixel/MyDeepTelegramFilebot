@@ -111,6 +111,7 @@ TOKEN = os.environ.get("TELEGRAM_TOKEN")
 BOT_USERNAME = os.environ.get("BOT_USERNAME")
 ADMIN_IDS = [int(id.strip()) for id in os.environ.get("ADMIN_ID", "").split(",") if id.strip()] if os.environ.get("ADMIN_ID") else []
 
+# POST_CHANNELS must be set in environment variables!
 POST_CHANNELS = [ch.strip() for ch in os.environ.get("POST_CHANNELS", "").split(",") if ch.strip()] if os.environ.get("POST_CHANNELS") else []
 
 REQUIRED_CHANNELS = [
@@ -412,7 +413,6 @@ async def receive_video_for_post(update: Update, context: ContextTypes.DEFAULT_T
             await update.message.reply_text("ပုံ မတွေ့ပါ။ /newpost ကို ထပ်မံစတင်ပါ။")
             return ConversationHandler.END
 
-        # Caption with telegraph link in button only (NOT in caption)
         if telegraph_url:
             preview = caption_full[:300] + "..." if len(caption_full) > 300 else caption_full
             photo_caption = f"📝 ဇာတ်ကားအကျဉ်းချုပ်\n\n{preview}"
@@ -566,16 +566,24 @@ async def cancel_batchlink(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
     return ConversationHandler.END
 
-# ---------- /channelpost Command ----------
+# ========== /channelpost Conversation ==========
 CHANNELPOST_PHOTO, CHANNELPOST_VIDEO = 50, 51
 
 async def channelpost_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("⛔ သင်သည် Admin မဟုတ်ပါ။")
         return ConversationHandler.END
+    
+    # Check if POST_CHANNELS is set
     if not POST_CHANNELS:
-        await update.message.reply_text("❌ POST_CHANNELS environment variable not set. Please configure target channels first.")
+        await update.message.reply_text(
+            "❌ POST_CHANNELS environment variable မသတ်မှတ်ထားပါ။\n\n"
+            "Render မှာ Environment Variable အဖြစ် အောက်ပါအတိုင်း ထည့်ပါ:\n"
+            "POST_CHANNELS = -1001234567890,-1009876543210\n\n"
+            "(Channel IDs များကို comma ခြားပြီး ထည့်ပါ)"
+        )
         return ConversationHandler.END
+    
     await update.message.reply_text("📸 **ပုံနှင့် စာသား (Caption) တစ်ခါတည်း ပို့ပေးပါ။**\n\n(စာသားရှည်ပါက Telegraph ဖြင့် အလိုအလျောက် တင်ပေးပါမည်)\n\nဖျက်သိမ်းရန် `/cancel` ရိုက်ပါ။")
     return CHANNELPOST_PHOTO
 
@@ -583,12 +591,14 @@ async def channelpost_receive_photo(update: Update, context: ContextTypes.DEFAUL
     if not update.message.photo:
         await update.message.reply_text("ကျေးဇူးပြု၍ ပုံတစ်ပုံ ပို့ပေးပါ (စာသားပါလျှင် caption တွင် ထည့်ပါ)")
         return CHANNELPOST_PHOTO
+    
     photo_file_id = update.message.photo[-1].file_id
     caption_text = update.message.caption or ""
     context.user_data['channelpost_photo'] = photo_file_id
     context.user_data['channelpost_raw_caption'] = caption_text
     context.user_data['channelpost_telegraph_url'] = None
 
+    # Check if caption is too long for Telegram (max 1024 chars)
     if len(caption_text) > 1024:
         await update.message.reply_text("⏳ စာသားရှည်နေပါသည်။ Telegraph စာမျက်နှာ ဖန်တီးနေပါပြီ...")
         try:
@@ -602,6 +612,7 @@ async def channelpost_receive_photo(update: Update, context: ContextTypes.DEFAUL
         except Exception as e:
             logger.error(f"Telegraph error: {e}")
             await update.message.reply_text("❌ Telegraph စာမျက်နှာ ဖန်တီးရာတွင် ချို့ယွင်းချက်။")
+    
     await update.message.reply_text("🎬 **Video File** ကို ပို့ပေးပါ။")
     return CHANNELPOST_VIDEO
 
@@ -611,46 +622,64 @@ async def channelpost_receive_video(update: Update, context: ContextTypes.DEFAUL
         video = update.message.video
     elif update.message.document and update.message.document.mime_type.startswith('video/'):
         video = update.message.document
+    
     if not video:
         await update.message.reply_text("❌ Video file တစ်ခု ပို့ပေးပါ (video file သို့မဟုတ် video document)")
         return CHANNELPOST_VIDEO
+    
     try:
         file_name = getattr(video, 'file_name', None)
         if not file_name:
             file_name = "ဇာတ်ကား"
+        
+        # Generate deep link for the video
         payload = generate_payload()
         save_file_info(payload, video.file_id, file_name)
         deep_link = create_deep_linked_url(BOT_USERNAME, payload)
-        button = InlineKeyboardButton("🎬 ဇာတ်ကားရယူရန်", url=deep_link)
-        reply_markup = InlineKeyboardMarkup([[button]])
-
+        
+        # Prepare the post
         photo_id = context.user_data.get('channelpost_photo')
         raw_caption = context.user_data.get('channelpost_raw_caption', '')
         telegraph_url = context.user_data.get('channelpost_telegraph_url')
+        
         if not photo_id:
             await update.message.reply_text("ပုံ မတွေ့ပါ။ /channelpost ကို ထပ်စမ်းပါ။")
             return ConversationHandler.END
-
+        
+        # Create caption with telegraph link if available
         if telegraph_url:
             preview = raw_caption[:300] + "..." if len(raw_caption) > 300 else raw_caption
-            final_caption = f"{preview}\n\n📖 ဇာတ်ညွှန်းအပြည့်အစုံဖတ်ရန်: {telegraph_url}"
+            final_caption = f"{preview}\n\n📖 [ဇာတ်ညွှန်းအပြည့်အစုံဖတ်ရန်]({telegraph_url})"
+            parse_mode = "Markdown"
         else:
-            final_caption = raw_caption
-
+            # Truncate if too long for Telegram
+            if len(raw_caption) > 1024:
+                final_caption = raw_caption[:1020] + "..."
+            else:
+                final_caption = raw_caption
+            parse_mode = None
+        
+        # Create button with deep link
+        button = InlineKeyboardButton("🎬 ဇာတ်ကားရယူရန်", url=deep_link)
+        reply_markup = InlineKeyboardMarkup([[button]])
+        
+        # Send to each channel in POST_CHANNELS
         success_count = 0
-        for channel in POST_CHANNELS:
+        for channel_id in POST_CHANNELS:
             try:
                 await context.bot.send_photo(
-                    chat_id=channel,
+                    chat_id=channel_id,
                     photo=photo_id,
                     caption=final_caption,
-                    reply_markup=reply_markup
+                    reply_markup=reply_markup,
+                    parse_mode=parse_mode
                 )
                 success_count += 1
-                logger.info(f"Posted to channel {channel}")
+                logger.info(f"Posted to channel {channel_id}")
                 await asyncio.sleep(1)
             except Exception as e:
-                logger.error(f"Failed to post to channel {channel}: {e}")
+                logger.error(f"Failed to post to channel {channel_id}: {e}")
+        
         await update.message.reply_text(
             f"✅ **Post တင်ခြင်း ပြီးဆုံးပါပြီ။**\n\n"
             f"**အောင်မြင်သော Channel:** {success_count}/{len(POST_CHANNELS)}\n"
