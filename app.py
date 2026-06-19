@@ -111,6 +111,7 @@ TOKEN = os.environ.get("TELEGRAM_TOKEN")
 BOT_USERNAME = os.environ.get("BOT_USERNAME")
 ADMIN_IDS = [int(id.strip()) for id in os.environ.get("ADMIN_ID", "").split(",") if id.strip()] if os.environ.get("ADMIN_ID") else []
 
+# POST_CHANNELS must be set in environment variables!
 POST_CHANNELS = [ch.strip() for ch in os.environ.get("POST_CHANNELS", "").split(",") if ch.strip()] if os.environ.get("POST_CHANNELS") else []
 
 REQUIRED_CHANNELS = [
@@ -118,6 +119,9 @@ REQUIRED_CHANNELS = [
     {"id": "-1003792838735", "name": "🔞 လူကြီးများအတွက် သီးသန့်ချန်နယ် (ကလေးများမဝင်ရ)", "invite": "https://t.me/everyboyhobby"},
     {"id": "-1003785717514", "name": "🎵 မြန်မာသီချင်းချန်နယ်", "invite": "https://t.me/wznmusiclibary"}
 ]
+
+OTHER_CHANNELS = []
+MUSIC_CHANNEL_LINK = ""
 
 def is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS
@@ -127,16 +131,12 @@ maintenance_mode = False
 def generate_payload():
     return secrets.token_urlsafe(16)
 
-# ============================================================
-# 🔥 FIX: Error ဖြစ်ရင် True ပြန်ပေးမယ်
-# ============================================================
 async def is_member_of_channel(user_id: int, channel_id: str, context: ContextTypes.DEFAULT_TYPE) -> bool:
     try:
         member = await context.bot.get_chat_member(chat_id=channel_id, user_id=user_id)
         return member.status in ["member", "administrator", "creator"]
-    except Exception as e:
-        logger.warning(f"Channel check error for {channel_id}: {e}")
-        return True  # <---- Error ဖြစ်ရင် ဝင်ထားတယ်လို့ ယူဆ
+    except:
+        return False
 
 async def check_all_channels(user_id: int, context: ContextTypes.DEFAULT_TYPE) -> tuple:
     missing = []
@@ -166,9 +166,7 @@ async def create_telegraph_page(title: str, content_text: str) -> str:
         logger.error(f"Telegraph error: {e}")
         return None
 
-# ============================================================
-# 🔥 START FUNCTION - အပြည့်အစုံ ပြင်ဆင်ပြီး
-# ============================================================
+# ---------- Start & Deep Link Handler ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
 
@@ -179,25 +177,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ ဤလင့်သည် မမှန်ကန်ပါ သို့မဟုတ် သက်တမ်းကုန်သွားပါပြီ။")
             return
 
-        # ===== Admin ဖြစ်ရင် Channel Check ကျော်မယ် =====
-        if is_admin(user_id):
-            file_id = file_info["file_id"]
-            file_name = file_info["file_name"]
-            try:
-                await update.message.reply_text(f"🎬 (Admin) {file_name} ပို့ပေးနေပါပြီ...")
-                await context.bot.send_video(
-                    chat_id=user_id,
-                    video=file_id,
-                    caption=f"🎬 သင့်ဇာတ်ကား - {file_name}"
-                )
-                add_user(user_id)
-                increment_requests()
-                reset_attempts(user_id)
-            except Exception as e:
-                await context.bot.send_message(chat_id=user_id, text=f"❌ Video ပို့ရာတွင် အမှား: {str(e)}")
-            return
-
-        # ===== သာမန် User တွေအတွက် Channel Check လုပ်မယ် =====
         if is_user_blocked(user_id):
             await update.message.reply_text(
                 "🔒 လူကြီးမင်းသည် ချန်နယ်များကို မဝင်ဘဲ လင့်ကို ၁၀ ကြိမ်အထက်နှိပ်ထားသည့်အတွက် ကျွန်ုပ်က block လုပ်ထားပါသည်။\n"
@@ -206,7 +185,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         all_joined, missing = await check_all_channels(user_id, context)
-        
         if not all_joined:
             increment_attempts(user_id)
             attempts = get_attempt_count(user_id)
@@ -596,6 +574,7 @@ async def channelpost_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⛔ သင်သည် Admin မဟုတ်ပါ။")
         return ConversationHandler.END
     
+    # Check if POST_CHANNELS is set
     if not POST_CHANNELS:
         await update.message.reply_text(
             "❌ POST_CHANNELS environment variable မသတ်မှတ်ထားပါ။\n\n"
@@ -619,6 +598,7 @@ async def channelpost_receive_photo(update: Update, context: ContextTypes.DEFAUL
     context.user_data['channelpost_raw_caption'] = caption_text
     context.user_data['channelpost_telegraph_url'] = None
 
+    # Check if caption is too long for Telegram (max 1024 chars)
     if len(caption_text) > 1024:
         await update.message.reply_text("⏳ စာသားရှည်နေပါသည်။ Telegraph စာမျက်နှာ ဖန်တီးနေပါပြီ...")
         try:
@@ -652,10 +632,12 @@ async def channelpost_receive_video(update: Update, context: ContextTypes.DEFAUL
         if not file_name:
             file_name = "ဇာတ်ကား"
         
+        # Generate deep link for the video
         payload = generate_payload()
         save_file_info(payload, video.file_id, file_name)
         deep_link = create_deep_linked_url(BOT_USERNAME, payload)
         
+        # Prepare the post
         photo_id = context.user_data.get('channelpost_photo')
         raw_caption = context.user_data.get('channelpost_raw_caption', '')
         telegraph_url = context.user_data.get('channelpost_telegraph_url')
@@ -664,20 +646,24 @@ async def channelpost_receive_video(update: Update, context: ContextTypes.DEFAUL
             await update.message.reply_text("ပုံ မတွေ့ပါ။ /channelpost ကို ထပ်စမ်းပါ။")
             return ConversationHandler.END
         
+        # Create caption with telegraph link if available
         if telegraph_url:
             preview = raw_caption[:300] + "..." if len(raw_caption) > 300 else raw_caption
             final_caption = f"{preview}\n\n📖 [ဇာတ်ညွှန်းအပြည့်အစုံဖတ်ရန်]({telegraph_url})"
             parse_mode = "Markdown"
         else:
+            # Truncate if too long for Telegram
             if len(raw_caption) > 1024:
                 final_caption = raw_caption[:1020] + "..."
             else:
                 final_caption = raw_caption
             parse_mode = None
         
+        # Create button with deep link
         button = InlineKeyboardButton("🎬 ဇာတ်ကားရယူရန်", url=deep_link)
         reply_markup = InlineKeyboardMarkup([[button]])
         
+        # Send to each channel in POST_CHANNELS
         success_count = 0
         for channel_id in POST_CHANNELS:
             try:
