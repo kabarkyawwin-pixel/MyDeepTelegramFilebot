@@ -136,7 +136,7 @@ async def is_member_of_channel(user_id: int, channel_id: str, context: ContextTy
         return member.status in ["member", "administrator", "creator"]
     except Exception as e:
         logger.warning(f"Channel check error for {channel_id}: {e}")
-        return True  # <---- အဓိက ပြင်ဆင်ချက်
+        return True  # <---- Error ဖြစ်ရင် ဝင်ထားတယ်လို့ ယူဆ
 
 async def check_all_channels(user_id: int, context: ContextTypes.DEFAULT_TYPE) -> tuple:
     missing = []
@@ -167,7 +167,7 @@ async def create_telegraph_page(title: str, content_text: str) -> str:
         return None
 
 # ============================================================
-# 🔥 FIX: START FUNCTION (အပြည့်အစုံ ပြင်ဆင်ပြီး)
+# 🔥 START FUNCTION - Channel Check ထားပြီး Error ဖြေရှင်းထား
 # ============================================================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -179,7 +179,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ ဤလင့်သည် မမှန်ကန်ပါ သို့မဟုတ် သက်တမ်းကုန်သွားပါပြီ။")
             return
 
-        # ===== 🔥 Admin ဖြစ်ရင် Channel Check ကျော်မယ် =====
+        # ===== Admin ဖြစ်ရင် Channel Check ကျော်မယ် =====
         if is_admin(user_id):
             file_id = file_info["file_id"]
             file_name = file_info["file_name"]
@@ -196,9 +196,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception as e:
                 await context.bot.send_message(chat_id=user_id, text=f"❌ Video ပို့ရာတွင် အမှား: {str(e)}")
             return
-        # ===== Admin အတွက် ပြီးဆုံး =====
 
-        # ===== သာမန် User တွေအတွက် =====
+        # ===== သာမန် User တွေအတွက် Channel Check လုပ်မယ် =====
         if is_user_blocked(user_id):
             await update.message.reply_text(
                 "🔒 လူကြီးမင်းသည် ချန်နယ်များကို မဝင်ဘဲ လင့်ကို ၁၀ ကြိမ်အထက်နှိပ်ထားသည့်အတွက် ကျွန်ုပ်က block လုပ်ထားပါသည်။\n"
