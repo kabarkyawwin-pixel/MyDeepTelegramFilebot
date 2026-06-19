@@ -166,7 +166,9 @@ async def create_telegraph_page(title: str, content_text: str) -> str:
         logger.error(f"Telegraph error: {e}")
         return None
 
-# ---------- Start & Deep Link Handler ----------
+# ======================================================
+# ========== START & DEEP LINK HANDLER (ပြင်ဆင်ပြီး) ==========
+# ======================================================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
 
@@ -177,6 +179,26 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ ဤလင့်သည် မမှန်ကန်ပါ သို့မဟုတ် သက်တမ်းကုန်သွားပါပြီ။")
             return
 
+        # ---- 🔥 ပြင်ဆင်ချက် - Admin ဖြစ်ရင် အားလုံးကျော်ပြီး Video တန်းပို့ပေး ----
+        if is_admin(user_id):
+            file_id = file_info["file_id"]
+            file_name = file_info["file_name"]
+            try:
+                await update.message.reply_text(f"🎬 (Admin) {file_name} ပို့ပေးနေပါပြီ...")
+                await context.bot.send_video(
+                    chat_id=user_id,
+                    video=file_id,
+                    caption=f"🎬 သင့်ဇာတ်ကား - {file_name}"
+                )
+                add_user(user_id)
+                increment_requests()
+                reset_attempts(user_id)
+            except Exception as e:
+                await context.bot.send_message(chat_id=user_id, text=f"❌ Video ပို့ရာတွင် အမှား: {str(e)}")
+            return
+        # ---- Admin အတွက် ပြီးဆုံး ----
+
+        # ဒီအောက်က သာမန် User များအတွက် မူလအတိုင်း ဆက်လက်ဆောင်ရွက်မည်
         if is_user_blocked(user_id):
             await update.message.reply_text(
                 "🔒 လူကြီးမင်းသည် ချန်နယ်များကို မဝင်ဘဲ လင့်ကို ၁၀ ကြိမ်အထက်နှိပ်ထားသည့်အတွက် ကျွန်ုပ်က block လုပ်ထားပါသည်။\n"
@@ -274,6 +296,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="Markdown"
             )
 
+# ---------- အောက်ပါ code များသည် မူရင်းအတိုင်း ဖြစ်ပြီး ဘာမှမပြောင်းပါ ----------
 # ---------- Admin Menu ----------
 async def show_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
