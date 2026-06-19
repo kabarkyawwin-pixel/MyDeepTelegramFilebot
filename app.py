@@ -135,7 +135,8 @@ async def is_member_of_channel(user_id: int, channel_id: str, context: ContextTy
     try:
         member = await context.bot.get_chat_member(chat_id=channel_id, user_id=user_id)
         return member.status in ["member", "administrator", "creator"]
-    except:
+    except Exception as e:
+        logger.warning(f"is_member_of_channel error for {user_id} in {channel_id}: {e}")
         return False
 
 async def check_all_channels(user_id: int, context: ContextTypes.DEFAULT_TYPE) -> tuple:
@@ -166,9 +167,7 @@ async def create_telegraph_page(title: str, content_text: str) -> str:
         logger.error(f"Telegraph error: {e}")
         return None
 
-# ======================================================
-# ========== START & DEEP LINK HANDLER (ပြင်ဆင်ပြီး) ==========
-# ======================================================
+# ---------- Start & Deep Link Handler ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
 
@@ -179,7 +178,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ ဤလင့်သည် မမှန်ကန်ပါ သို့မဟုတ် သက်တမ်းကုန်သွားပါပြီ။")
             return
 
-        # ---- 🔥 ပြင်ဆင်ချက် - Admin ဖြစ်ရင် အားလုံးကျော်ပြီး Video တန်းပို့ပေး ----
+        # ---- 🔥 Admin ဖြစ်ရင် Channel စစ်ဆေးမှုကိုကျော်ပြီး Video တန်းပို့ပေး ----
         if is_admin(user_id):
             file_id = file_info["file_id"]
             file_name = file_info["file_name"]
@@ -198,7 +197,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         # ---- Admin အတွက် ပြီးဆုံး ----
 
-        # ဒီအောက်က သာမန် User များအတွက် မူလအတိုင်း ဆက်လက်ဆောင်ရွက်မည်
+        # ---- သာမန် User များအတွက် Channel စစ်ဆေးခြင်းနှင့် Block စစ်ဆေးခြင်းများကို ဆက်လက်လုပ်ဆောင်မယ် ----
         if is_user_blocked(user_id):
             await update.message.reply_text(
                 "🔒 လူကြီးမင်းသည် ချန်နယ်များကို မဝင်ဘဲ လင့်ကို ၁၀ ကြိမ်အထက်နှိပ်ထားသည့်အတွက် ကျွန်ုပ်က block လုပ်ထားပါသည်။\n"
@@ -231,6 +230,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text(block_msg)
             return
 
+        # User က all_joined ဖြစ်သွားရင် (သို့) unblock လုပ်ပြီးသားဆိုရင် ဆက်လုပ်မယ်
         if is_user_blocked(user_id):
             unblock_user(user_id)
             await update.message.reply_text("✅ သင်သည် လိုအပ်သောချန်နယ်များအားလုံးကို ဝင်ရောက်ထားပြီးဖြစ်သောကြောင့် သင့်အား unblock လုပ်လိုက်ပါသည်။")
@@ -296,7 +296,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="Markdown"
             )
 
-# ---------- အောက်ပါ code များသည် မူရင်းအတိုင်း ဖြစ်ပြီး ဘာမှမပြောင်းပါ ----------
+# ---------- အောက်ပါ code များသည် မူရင်းအတိုင်း ဖြစ်ပြီး ပြောင်းလဲစရာမလိုပါ ----------
+# (အတိုချုံးပြီး ပြသထားသည်။ မူရင်းအတိုင်းထားပါ)
+
 # ---------- Admin Menu ----------
 async def show_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
