@@ -127,17 +127,16 @@ maintenance_mode = False
 def generate_payload():
     return secrets.token_urlsafe(16)
 
-# ======================================================
-# 🔥 ပြင်ဆင်ထားတဲ့ is_member_of_channel - Error ဖြစ်ရင် True ပြန်မယ်
-# ======================================================
+# ============================================================
+# 🔥 FIX: Error ဖြစ်ရင် True ပြန်ပေးမယ် (Channel ဝင်ထားတယ်လို့ ယူဆ)
+# ============================================================
 async def is_member_of_channel(user_id: int, channel_id: str, context: ContextTypes.DEFAULT_TYPE) -> bool:
     try:
         member = await context.bot.get_chat_member(chat_id=channel_id, user_id=user_id)
         return member.status in ["member", "administrator", "creator"]
     except Exception as e:
-        # Error ဖြစ်ရင် True ပြန်ပေးလိုက်မယ် (Channel ဝင်ထားတယ်လို့ ယူဆ)
         logger.warning(f"Channel check error for {channel_id}: {e}")
-        return True
+        return True  # <---- အဓိက ပြင်ဆင်ချက်
 
 async def check_all_channels(user_id: int, context: ContextTypes.DEFAULT_TYPE) -> tuple:
     missing = []
@@ -167,9 +166,9 @@ async def create_telegraph_page(title: str, content_text: str) -> str:
         logger.error(f"Telegraph error: {e}")
         return None
 
-# ======================================================
-# 🔥 ပြင်ဆင်ထားတဲ့ START FUNCTION (အပြည့်အစုံ)
-# ======================================================
+# ============================================================
+# 🔥 FIX: START FUNCTION (အပြည့်အစုံ ပြင်ဆင်ပြီး)
+# ============================================================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
 
@@ -180,7 +179,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ ဤလင့်သည် မမှန်ကန်ပါ သို့မဟုတ် သက်တမ်းကုန်သွားပါပြီ။")
             return
 
-        # ---- Admin ဖြစ်ရင် Channel Check ကျော်မယ် ----
+        # ===== 🔥 Admin ဖြစ်ရင် Channel Check ကျော်မယ် =====
         if is_admin(user_id):
             file_id = file_info["file_id"]
             file_name = file_info["file_name"]
@@ -197,8 +196,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception as e:
                 await context.bot.send_message(chat_id=user_id, text=f"❌ Video ပို့ရာတွင် အမှား: {str(e)}")
             return
+        # ===== Admin အတွက် ပြီးဆုံး =====
 
-        # ---- သာမန် User တွေအတွက် ----
+        # ===== သာမန် User တွေအတွက် =====
         if is_user_blocked(user_id):
             await update.message.reply_text(
                 "🔒 လူကြီးမင်းသည် ချန်နယ်များကို မဝင်ဘဲ လင့်ကို ၁၀ ကြိမ်အထက်နှိပ်ထားသည့်အတွက် ကျွန်ုပ်က block လုပ်ထားပါသည်။\n"
