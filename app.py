@@ -128,7 +128,7 @@ def generate_payload():
     return secrets.token_urlsafe(16)
 
 # ============================================================
-# 🔥 FIX: Error ဖြစ်ရင် True ပြန်ပေးမယ် (Channel ဝင်ထားတယ်လို့ ယူဆ)
+# 🔥 FIX: Error ဖြစ်ရင် True ပြန်ပေးမယ်
 # ============================================================
 async def is_member_of_channel(user_id: int, channel_id: str, context: ContextTypes.DEFAULT_TYPE) -> bool:
     try:
@@ -167,7 +167,7 @@ async def create_telegraph_page(title: str, content_text: str) -> str:
         return None
 
 # ============================================================
-# 🔥 START FUNCTION - Channel Check ထားပြီး Error ဖြေရှင်းထား
+# 🔥 START FUNCTION - အပြည့်အစုံ ပြင်ဆင်ပြီး
 # ============================================================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
