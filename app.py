@@ -334,8 +334,8 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "menu_convert_old":
         await query.edit_message_text("🔄 `/convert_old <limit>` ကို သုံးပါ။ (ဥပမာ `/convert_old 500` ဟုရိုက်ပါ)")
 
-# ---------- /newpost Command ----------
-POSTER, CAPTION, VIDEO_FILE = range(3)
+# ---------- /newpost Command (ပြင်ဆင်ပြီး - Caption ကို ၂ ခါခွဲပို့နိုင်ရန်) ----------
+POSTER, CAPTION, VIDEO_FILE, WAITING_VIDEO = range(4)
 
 async def newpost_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
@@ -349,32 +349,46 @@ async def receive_poster(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("ပုံတစ်ပုံ ပို့ပေးပါ။")
         return POSTER
     context.user_data['poster'] = update.message.photo[-1].file_id
-    await update.message.reply_text("✍️ ဇာတ်ကားအကြောင်း စာသား (ဇာတ်ညွှန်း) ရေးပေးပါ...\n(စာသားရှည်ပါက Telegraph တွင် အလိုအလျောက် တင်ပေးပါမည်)")
+    context.user_data['caption_parts'] = []  # caption part တွေ သိမ်းဖို့
+    await update.message.reply_text("✍️ ဇာတ်ကားအကြောင်း စာသား (ဇာတ်ညွှန်း) ရေးပေးပါ...\n(စာသားရှည်ပါက ၂ ခါခွဲပို့နိုင်ပါသည်။ ပြီးပါက 'a' ရိုက်ပါ။)")
     return CAPTION
 
 async def receive_caption(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    caption_text = update.message.text
-    context.user_data['caption_full'] = caption_text
-    context.user_data['telegraph_url'] = None
+    text = update.message.text
+    if text.lower() == 'a':
+        # စာသားအကုန်ရောက်ပြီဆိုရင် Caption ကို စုပေါင်းပြီး Telegraph လုပ်မယ်
+        caption_parts = context.user_data.get('caption_parts', [])
+        if not caption_parts:
+            await update.message.reply_text("⚠️ ဇာတ်ညွှန်း စာသား မရှိသေးပါ။ စာသား ပို့ပေးပါ။")
+            return CAPTION
+        full_caption = "\n\n".join(caption_parts)
+        context.user_data['caption_full'] = full_caption
+        context.user_data['telegraph_url'] = None
 
-    if len(caption_text) > 1024:
-        await update.message.reply_text("⏳ စာသားရှည်နေပါသည်။ Telegraph စာမျက်နှာ ဖန်တီးနေပါပြီ...")
-        try:
+        if len(full_caption) > 1024:
             title = f"Movie Synopsis - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-            page_url = await create_telegraph_page(title, caption_text)
-            if page_url:
-                context.user_data['telegraph_url'] = page_url
-                await update.message.reply_text(f"✅ Telegraph စာမျက်နှာ ဖန်တီးပြီးပါပြီ။\n\nဇာတ်ညွှန်းအပြည့်အစုံကို ဤလင့်တွင် ဖတ်ရှုနိုင်ပါသည်။\n{page_url}")
-            else:
-                await update.message.reply_text("❌ Telegraph စာမျက်နှာ ဖန်တီးရာတွင် အမှားရှိသည်။ စာသားကို ဆက်လက်အသုံးပြုပါမည်။")
-        except Exception as e:
-            logger.error(f"Telegraph error: {e}")
-            await update.message.reply_text("❌ Telegraph စာမျက်နှာ ဖန်တီးရာတွင် ချို့ယွင်းချက်ရှိသည်။")
+            try:
+                page_url = await create_telegraph_page(title, full_caption)
+                if page_url:
+                    context.user_data['telegraph_url'] = page_url
+                    await update.message.reply_text(f"✅ Telegraph စာမျက်နှာ ဖန်တီးပြီးပါပြီ။\n\nဇာတ်ညွှန်းအပြည့်အစုံကို ဤလင့်တွင် ဖတ်ရှုနိုင်ပါသည်။\n{page_url}")
+                else:
+                    await update.message.reply_text("❌ Telegraph စာမျက်နှာ ဖန်တီးရာတွင် အမှားရှိသည်။ စာသားကို ဆက်လက်အသုံးပြုပါမည်။")
+            except Exception as e:
+                logger.error(f"Telegraph error: {e}")
+                await update.message.reply_text("❌ Telegraph စာမျက်နှာ ဖန်တီးရာတွင် ချို့ယွင်းချက်ရှိသည်။")
 
-    await update.message.reply_text("🎬 Video File ကို ပို့ပေးပါ...")
-    return VIDEO_FILE
+        await update.message.reply_text("🎬 Video File ကို ပို့ပေးပါ...")
+        return WAITING_VIDEO
+    else:
+        # စာသားအပိုင်းကို သိမ်းမယ်
+        caption_parts = context.user_data.get('caption_parts', [])
+        caption_parts.append(text)
+        context.user_data['caption_parts'] = caption_parts
+        await update.message.reply_text(f"✅ ဇာတ်ညွှန်းအပိုင်း {len(caption_parts)} ကို လက်ခံရရှိပါပြီ။\n\nနောက်ထပ်အပိုင်းရှိလျှင် ထပ်ပို့ပါ။ ပြီးပါက 'a' ကို ရိုက်ပါ။")
+        return CAPTION
 
-async def receive_video_for_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def receive_video_after_caption(update: Update, context: ContextTypes.DEFAULT_TYPE):
     video = None
     if update.message.video:
         video = update.message.video
@@ -383,7 +397,7 @@ async def receive_video_for_post(update: Update, context: ContextTypes.DEFAULT_T
 
     if not video:
         await update.message.reply_text("Video file တစ်ခု ပို့ပေးပါ (video file သို့မဟုတ် video document)။")
-        return VIDEO_FILE
+        return WAITING_VIDEO
 
     try:
         file_name = getattr(video, 'file_name', None)
@@ -915,9 +929,9 @@ newpost_handler = ConversationHandler(
     states={
         POSTER: [MessageHandler(filters.PHOTO, receive_poster)],
         CAPTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_caption)],
-        VIDEO_FILE: [
-            MessageHandler(filters.VIDEO, receive_video_for_post),
-            MessageHandler(filters.Document.ALL, receive_video_for_post)
+        WAITING_VIDEO: [
+            MessageHandler(filters.VIDEO, receive_video_after_caption),
+            MessageHandler(filters.Document.ALL, receive_video_after_caption)
         ],
     },
     fallbacks=[CommandHandler('cancel', cancel_newpost)],
