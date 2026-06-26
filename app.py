@@ -65,12 +65,11 @@ def add_user(user_id):
 def get_all_users():
     return [doc["user_id"] for doc in users_collection.find({}, {"user_id": 1})]
 
-# ---------- CHANGED: Save multiple files under ONE payload ----------
+# ---------- Save multiple files under ONE payload ----------
 def save_file_info(payload, file_id, file_name):
     doc = file_store_collection.find_one({"payload": payload})
     if doc:
         files = doc.get("files", [])
-        # Avoid duplicates
         if not any(f.get("file_id") == file_id for f in files):
             files.append({"file_id": file_id, "file_name": file_name})
         file_store_collection.update_one(
@@ -83,7 +82,6 @@ def save_file_info(payload, file_id, file_name):
             "files": [{"file_id": file_id, "file_name": file_name}]
         })
 
-# ---------- CHANGED: Get list of files for a payload ----------
 def get_file_info(payload):
     doc = file_store_collection.find_one({"payload": payload})
     return doc.get("files", []) if doc else []
@@ -172,13 +170,13 @@ async def create_telegraph_page(title: str, content_text: str) -> str:
         logger.error(f"Telegraph error: {e}")
         return None
 
-# ---------- CHANGED: Start Handler (supports batch files) ----------
+# ---------- Start Handler (supports batch files) ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
 
     if context.args and len(context.args) > 0:
         payload = context.args[0]
-        file_list = get_file_info(payload)  # returns list of files
+        file_list = get_file_info(payload)
         if not file_list:
             await update.message.reply_text("❌ ဤလင့်သည် မမှန်ကန်ပါ သို့မဟုတ် သက်တမ်းကုန်သွားပါပြီ။")
             return
@@ -219,7 +217,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             unblock_user(user_id)
             await update.message.reply_text("✅ သင်သည် လိုအပ်သောချန်နယ်များအားလုံးကို ဝင်ရောက်ထားပြီးဖြစ်သောကြောင့် သင့်အား unblock လုပ်လိုက်ပါသည်။")
 
-        # ---- Send ALL files in the batch ----
+        # Send ALL files in the batch
         for file_info in file_list:
             file_id = file_info["file_id"]
             file_name = file_info["file_name"]
@@ -232,7 +230,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception as e:
                 await context.bot.send_message(chat_id=user_id, text=f"❌ {file_name} ပို့ရာတွင် အမှား: {str(e)}")
 
-        # Send warning only once
         warning_text = (
             "⚠️ ⚠️ ⚠️ အရေးကြီးပါတယ် ⚠️ ⚠️ ⚠️\n\n"
             "ဤရုပ်ရှင်ဖိုင်များ/ဗီဒီယိုများကို 5 မိနစ်အတွင်း (မူပိုင်ခွင့်ပြဿနာများကြောင့်) ဖျက်ပါမည်။\n\n"
@@ -281,7 +278,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="Markdown"
             )
 
-# ---------- Admin Menu (မြန်မာလို) ----------
+# ---------- Admin Menu ----------
 async def show_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [InlineKeyboardButton("🆕 New Post", callback_data="menu_newpost")],
@@ -337,12 +334,14 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         maintenance_mode = False
         await query.edit_message_text("🔊 Maintenance mode ပိတ်ထားပါသည်။")
     elif data == "menu_batchlink":
-        # Just inform about the new behavior
-        await query.edit_message_text("📦 **Batch Link စနစ်**\n\nသင်သည် Video ဖိုင်များကို တစ်ခုချင်း ပို့လိုက်ရုံဖြင့် Bot က စုစည်းသွားမည်။\nအားလုံးပို့ပြီးပါက `/done` ရိုက်ပြီး Deep Link တစ်ခုတည်း ရယူပါ။")
+        # Changed: Now directly starts the batchlink conversation
+        await query.edit_message_text("📦 `/batchlink` command ကို သုံးပါ။ (Video များစုပြီး `/done` ဖြင့် Deep Link တစ်ခုတည်း ရယူရန်)")
+        # Actually we could simulate the command by calling batchlink_start, but simpler to just tell the command.
+        # User can type /batchlink
     elif data == "menu_convert_old":
         await query.edit_message_text("🔄 `/convert_old <limit>` ကို သုံးပါ။ (ဥပမာ `/convert_old 500` ဟုရိုက်ပါ)")
 
-# ---------- /newpost Command (မပြောင်းလဲ) ----------
+# ---------- /newpost Command ----------
 POSTER, CAPTION, VIDEO_FILE, WAITING_VIDEO = range(4)
 
 async def newpost_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -460,7 +459,7 @@ async def cancel_newpost(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
     return ConversationHandler.END
 
-# ---------- /newfile Command (မပြောင်းလဲ) ----------
+# ---------- /newfile Command ----------
 async def newfile_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("⛔ သင်သည် Admin မဟုတ်ပါ။")
@@ -490,7 +489,7 @@ async def handle_video_for_newfile(update: Update, context: ContextTypes.DEFAULT
         else:
             await update.message.reply_text("Video file တစ်ခု ပို့ပေးပါ။")
 
-# ---------- /link Command (မပြောင်းလဲ) ----------
+# ---------- /link Command ----------
 async def link_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("⛔ သင်သည် Admin မဟုတ်ပါ။")
@@ -520,84 +519,62 @@ async def handle_video_for_link(update: Update, context: ContextTypes.DEFAULT_TY
         else:
             await update.message.reply_text("Video file တစ်ခု ပို့ပေးပါ။")
 
-# ---------- NEW: Automatic batch collection (no /batchlink needed) ----------
-# We'll use a simple approach: Admin sends videos, bot collects them in context.user_data['batch_videos']
-# Then /done will generate the deep link
+# ---------- NEW: /batchlink Command (like first bot) ----------
+BATCH_WAITING_FILES, BATCH_DONE = range(2)
 
-async def handle_admin_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """This handler catches any video sent by admin and adds it to batch collection."""
+async def batchlink_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
-        return
+        await update.message.reply_text("⛔ သင်သည် Admin မဟုတ်ပါ။")
+        return ConversationHandler.END
+    await update.message.reply_text("📤 Video ဖိုင်များကို တစ်ခါတည်း သို့မဟုတ် တစ်ခုချင်း ပို့ပါ။\nအားလုံးပြီးပါက /done ကိုနှိပ်ပါ။")
+    context.user_data['batch_files'] = []
+    return BATCH_WAITING_FILES
 
-    video = None
-    if update.message.video:
-        video = update.message.video
-    elif update.message.document and update.message.document.mime_type.startswith('video/'):
-        video = update.message.document
-
+async def batch_receive_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        return ConversationHandler.END
+    video = update.message.video or update.message.document
     if not video:
-        return
+        await update.message.reply_text("Video file တစ်ခု ပို့ပါ။")
+        return BATCH_WAITING_FILES
+    file_id = video.file_id
+    file_name = getattr(video, 'file_name', f"video_{len(context.user_data.get('batch_files', []))+1}")
+    batch_files = context.user_data.get('batch_files', [])
+    batch_files.append({"file_id": file_id, "file_name": file_name})
+    context.user_data['batch_files'] = batch_files
+    count = len(batch_files)
+    # Send confirmation exactly like first bot
+    await update.message.reply_text(f"✅ {file_name} ကို လက်ခံရရှိပါပြီ။ (စုစုပေါင်း {count} ဖိုင်)")
+    return BATCH_WAITING_FILES
 
-    file_name = getattr(video, 'file_name', None)
-    if not file_name:
-        file_name = "ဇာတ်ကား"
-
-    # Initialize batch_videos if not exists
-    if 'batch_videos' not in context.user_data:
-        context.user_data['batch_videos'] = []
-
-    batch_videos = context.user_data['batch_videos']
-    batch_videos.append({"file_id": video.file_id, "file_name": file_name})
-    count = len(batch_videos)
-
-    # Send confirmation exactly like the first bot
-    await update.message.reply_text(
-        f"✅ {file_name} ကို လက်ခံရရှိပါပြီ။ (စုစုပေါင်း {count} ဖိုင်)"
-    )
-
-async def done_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Generate a single deep link for all collected videos."""
+async def batch_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
-        return
-
-    batch_videos = context.user_data.get('batch_videos', [])
-    if not batch_videos:
-        await update.message.reply_text("❌ Video ဖိုင်များ မတွေ့ပါ။ ကျေးဇူးပြု၍ Video ဖိုင်များ ပို့ပါ။")
-        return
-
-    # Generate ONE payload
+        return ConversationHandler.END
+    files = context.user_data.get('batch_files', [])
+    if not files:
+        await update.message.reply_text("❌ ဖိုင်မရှိပါ။ ထပ်မံစတင်ပါ။")
+        return ConversationHandler.END
     payload = generate_payload()
-    file_names_list = []
-    for v in batch_videos:
-        save_file_info(payload, v["file_id"], v["file_name"])
-        file_names_list.append(v["file_name"])
-
-    # Create ONE deep link
+    for f in files:
+        save_file_info(payload, f['file_id'], f['file_name'])
     deep_link = create_deep_linked_url(BOT_USERNAME, payload)
-    file_names_str = "\n".join([f"🎬 {f}" for f in file_names_list])
-
+    file_names = "\n".join([f"🎬 {f['file_name']}" for f in files])
     await update.message.reply_text(
-        f"✅ **Batch Link ဖန်တီးပြီးပါပြီ။**\n\n"
-        f"ဤ Link တစ်ခုတည်းကို နှိပ်လိုက်ရင် ဖိုင်အကုန်လုံး တစ်ခါတည်း ရမှာပါ။\n\n"
-        f"📂 **ပါဝင်သောဖိုင်များ:**\n{file_names_str}\n\n"
-        f"🔗 **Deep Link:**\n{deep_link}\n\n"
-        f"(Channel 3 ခုစလုံးဝင်ထားရန် လိုအပ်)"
+        f"✅ Batch Link ဖန်တီးပြီးပါပြီ။\n\n"
+        f"ဖိုင်များ:\n{file_names}\n\n"
+        f"လင့်: {deep_link}"
     )
+    context.user_data.pop('batch_files', None)
+    return ConversationHandler.END
 
-    # Clear batch
-    context.user_data.pop('batch_videos', None)
-
-async def cancel_batch(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Cancel the current batch collection."""
+async def batch_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
-        return
-    if 'batch_videos' in context.user_data:
-        context.user_data.pop('batch_videos')
-        await update.message.reply_text("❌ စုစည်းထားသော Video များကို ပယ်ဖျက်လိုက်ပါပြီ။")
-    else:
-        await update.message.reply_text("ℹ️ စုစည်းထားသော Video မရှိပါ။")
+        return ConversationHandler.END
+    await update.message.reply_text("လုပ်ဆောင်ချက် ပယ်ဖျက်ပြီးပါပြီ။")
+    context.user_data.pop('batch_files', None)
+    return ConversationHandler.END
 
-# ---------- /channelpost Conversation (မပြောင်းလဲ) ----------
+# ---------- /channelpost Conversation ----------
 CHANNELPOST_PHOTO, CHANNELPOST_VIDEO = 50, 51
 
 async def channelpost_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -721,7 +698,7 @@ async def cancel_channelpost(update: Update, context: ContextTypes.DEFAULT_TYPE)
     context.user_data.clear()
     return ConversationHandler.END
 
-# ---------- /test_channel Command (မပြောင်းလဲ) ----------
+# ---------- /test_channel Command ----------
 async def test_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("⛔ သင်သည် Admin မဟုတ်ပါ။")
@@ -742,7 +719,7 @@ async def test_channel_receive_id(update: Update, context: ContextTypes.DEFAULT_
         finally:
             context.user_data.pop('test_channel_mode', None)
 
-# ---------- /convert_old Command (မပြောင်းလဲ) ----------
+# ---------- /convert_old Command ----------
 async def convert_old(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("⛔ သင်သည် Admin မဟုတ်ပါ။")
@@ -834,7 +811,7 @@ async def convert_old(update: Update, context: ContextTypes.DEFAULT_TYPE):
         summary += f"\n\n⚠️ ပထမ {min(10, len(error_details))} error များ:\n" + "\n".join(error_details[:10])
     await update.message.reply_text(summary, parse_mode="Markdown")
 
-# ---------- Other Admin Commands (မပြောင်းလဲ) ----------
+# ---------- Other Admin Commands ----------
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         return
@@ -958,6 +935,18 @@ channelpost_handler = ConversationHandler(
     fallbacks=[CommandHandler('cancel', cancel_channelpost)],
 )
 
+# NEW: batchlink ConversationHandler (exactly like first bot)
+batchlink_handler = ConversationHandler(
+    entry_points=[CommandHandler('batchlink', batchlink_start)],
+    states={
+        BATCH_WAITING_FILES: [
+            MessageHandler(filters.VIDEO | filters.Document.ALL, batch_receive_file),
+            CommandHandler('done', batch_done)
+        ],
+    },
+    fallbacks=[CommandHandler('cancel', batch_cancel)],
+)
+
 # Add handlers
 application.add_handler(CommandHandler("start", start))
 application.add_handler(newpost_handler)
@@ -969,14 +958,8 @@ application.add_handler(CommandHandler("link", link_command))
 application.add_handler(MessageHandler(filters.VIDEO & filters.ChatType.PRIVATE, handle_video_for_link))
 application.add_handler(MessageHandler(filters.Document.ALL & filters.ChatType.PRIVATE, handle_video_for_link))
 
-# NEW: Automatic batch collection - Admin sends videos, they get collected
-# This handler must be placed before other video handlers to avoid conflicts
-application.add_handler(MessageHandler(filters.VIDEO & filters.ChatType.PRIVATE, handle_admin_video))
-application.add_handler(MessageHandler(filters.Document.ALL & filters.ChatType.PRIVATE, handle_admin_video))
-
-# NEW: /done and /cancel for batch
-application.add_handler(CommandHandler("done", done_command))
-application.add_handler(CommandHandler("cancelbatch", cancel_batch))
+# NEW: add batchlink handlers (replace old automatic video handler)
+application.add_handler(batchlink_handler)
 
 # Other commands
 application.add_handler(CommandHandler("menu", menu_command))
