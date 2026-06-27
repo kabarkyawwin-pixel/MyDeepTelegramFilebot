@@ -557,20 +557,22 @@ async def batch_receive_file(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     file_id = video.file_id
     
-    # ၁။ ဖိုင်၏ မူလနာမည်ကို ဆွဲကြည့်
-    file_name = getattr(video, 'file_name', None)
-    
-    # ၂။ မူလနာမည်မရှိရင် Caption ထဲက စာသားကို နာမည်အဖြစ် သုံးမယ် (ဒါက ခင်ဗျားအတွက် အဓိက)
-    if not file_name or file_name.strip() == "":
-        if update.message.caption:
-            file_name = update.message.caption.strip()
-        else:
-            # Caption မှာလည်း မပါရင် fallback နာမည်ပေး
+    # >>>>>>>>> ဒီနေရာက ပြင်ထားတဲ့ အဓိက နေရာ <<<<<<<<<
+    # ၁။ Caption ကို ဦးစားပေးမယ်
+    caption = update.message.caption
+    if caption and caption.strip():
+        file_name = caption.strip()
+    else:
+        # ၂။ Caption မပါရင် မူလနာမည်ကို ယူမယ်
+        file_name = getattr(video, 'file_name', None)
+        if not file_name or file_name.strip() == "":
+            # ၃။ နှစ်ခုလုံးမပါရင် fallback
             file_name = f"video_{len(context.user_data.get('batch_files', []))+1}.mp4"
     
-    # ၃။ နာမည်ရဲ့အဆုံးမှာ .mp4 မပါရင် ထပ်ထည့်ပေးမယ် (Telegram က ဗီဒီယိုအဖြစ် သိစေဖို့)
+    # extension မပါရင် ထပ်ထည့်မယ်
     if not file_name.lower().endswith(('.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm')):
         file_name = file_name + ".mp4"
+    # >>>>>>>>> ပြင်ဆင်မှု ပြီးဆုံး <<<<<<<<<
     
     batch_files = context.user_data.get('batch_files', [])
     batch_files.append({"file_id": file_id, "file_name": file_name})
