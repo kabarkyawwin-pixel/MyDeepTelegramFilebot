@@ -217,14 +217,18 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             unblock_user(user_id)
             await update.message.reply_text("✅ သင်သည် လိုအပ်သောချန်နယ်များအားလုံးကို ဝင်ရောက်ထားပြီးဖြစ်သောကြောင့် သင့်အား unblock လုပ်လိုက်ပါသည်။")
 
-        # Send all files in the batch
+        # >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+        # >>>>>>> ဒီနေရာကို ကျွန်တော် ပြင်ထားပါတယ် (send_video -> send_document) <<<<<<<
+        # >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
         for file_info in file_list:
             file_id = file_info["file_id"]
             file_name = file_info["file_name"]
             try:
-                await context.bot.send_video(
+                # send_video အစား send_document သုံးပြီး filename= ထည့်ပေးလိုက်တယ်
+                await context.bot.send_document(
                     chat_id=user_id,
-                    video=file_id,
+                    document=file_id,
+                    filename=file_name,          # <--- ဒီဟာက file name ပါအောင်လုပ်ပေးတယ်
                     caption=f"🎬 {file_name}"
                 )
             except Exception as e:
