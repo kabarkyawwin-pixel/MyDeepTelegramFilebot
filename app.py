@@ -217,22 +217,25 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             unblock_user(user_id)
             await update.message.reply_text("✅ သင်သည် လိုအပ်သောချန်နယ်များအားလုံးကို ဝင်ရောက်ထားပြီးဖြစ်သောကြောင့် သင့်အား unblock လုပ်လိုက်ပါသည်။")
 
-        # >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-        # >>>>>>> ဒီနေရာကို ကျွန်တော် ပြင်ထားပါတယ် (send_video -> send_document) <<<<<<<
-        # >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+        # ============================== ဒီနေရာကို ပြင်ထားပါတယ် (video -> document) ==============================
         for file_info in file_list:
             file_id = file_info["file_id"]
-            file_name = file_info["file_name"]
+            # file_name ဗလာဖြစ်နေရင် မူလနာမည်အတိုင်း မပြန်ပို့နိုင်လို့ fallback ပေးထားတယ်
+            file_name = file_info.get("file_name")
+            if not file_name:
+                file_name = "movie.mp4"
+
             try:
-                # send_video အစား send_document သုံးပြီး filename= ထည့်ပေးလိုက်တယ်
+                # send_video အစား send_document သုံးပြီး filename= ထည့်ပေးတယ်
                 await context.bot.send_document(
                     chat_id=user_id,
                     document=file_id,
-                    filename=file_name,          # <--- ဒီဟာက file name ပါအောင်လုပ်ပေးတယ်
+                    filename=file_name,          # <--- ဒီဟာက file name ပါအောင်လုပ်ပေးတယ် (မြန်မာလိုလည်း အဆင်ပြေတယ်)
                     caption=f"🎬 {file_name}"
                 )
             except Exception as e:
                 await context.bot.send_message(chat_id=user_id, text=f"❌ {file_name} ပို့ရာတွင် အမှား: {str(e)}")
+        # =================================================================================
 
         warning_text = (
             "⚠️ ⚠️ ⚠️ အရေးကြီးပါတယ် ⚠️ ⚠️ ⚠️\n\n"
@@ -312,9 +315,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "menu_newpost":
         await query.edit_message_text("📸 `/newpost` command ကို သုံးပါ။ (Post ဖန်တီးရန်)")
     elif data == "menu_newfile":
-        # If user clicks, we can start the newfile flow
         await query.edit_message_text("🔗 `/newfile` command ကို သုံးပါ။ (Video ပို့ပါက Deep Link ရမည်)")
-        # Or we can automatically start it: but simpler to tell them.
     elif data == "menu_channelpost":
         await query.edit_message_text("📢 `/channelpost` command ကို သုံးပါ။ (ပုံ+စာသားတစ်ခါတည်း → Video → Channel များသို့ တိုက်ရိုက်တင်မည်)")
     elif data == "menu_stats":
@@ -462,7 +463,7 @@ async def cancel_newpost(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
     return ConversationHandler.END
 
-# ---------- /newfile Command (FIXED) ----------
+# ---------- /newfile Command ----------
 async def newfile_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("⛔ သင်သည် Admin မဟုတ်ပါ။")
@@ -473,7 +474,6 @@ async def newfile_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_video_for_newfile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         return
-    # Only process if we are waiting for newfile
     if context.user_data.get('waiting_for_newfile'):
         video = update.message.video or update.message.document
         if video:
@@ -544,7 +544,11 @@ async def batch_receive_file(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text("Video file တစ်ခု ပို့ပါ။")
         return BATCH_WAITING_FILES
     file_id = video.file_id
-    file_name = getattr(video, 'file_name', f"video_{len(context.user_data.get('batch_files', []))+1}")
+    # file_name ကို သေချာသိမ်းပါ (မြန်မာလိုလည်း ရတယ်)
+    file_name = getattr(video, 'file_name', None)
+    if not file_name:
+        file_name = f"video_{len(context.user_data.get('batch_files', []))+1}.mp4"
+
     batch_files = context.user_data.get('batch_files', [])
     batch_files.append({"file_id": file_id, "file_name": file_name})
     context.user_data['batch_files'] = batch_files
