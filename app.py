@@ -170,9 +170,9 @@ async def create_telegraph_page(title: str, content_text: str) -> str:
         logger.error(f"Telegraph error: {e}")
         return None
 
-# =================================================================
-# >>>>>>>>>>>>>>>>> UNIFIED FILENAME FUNCTION <<<<<<<<<<<<<<<<<<<
-# =================================================================
+# ============================================================
+# >>>>>>>>>>>>> UNIFIED FILENAME FUNCTION <<<<<<<<<<<<<<<<<<
+# ============================================================
 def get_video_name(video, caption=None, poster_caption=None, fallback="movie.mp4"):
     """
     Unified function to get video name with priority:
@@ -211,7 +211,7 @@ def get_video_name(video, caption=None, poster_caption=None, fallback="movie.mp4
     # ၄။ အကုန်မရှိရင် fallback
     return fallback
 
-# =================================================================
+# ============================================================
 
 # ---------- Start Handler ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -260,7 +260,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             unblock_user(user_id)
             await update.message.reply_text("✅ သင်သည် လိုအပ်သောချန်နယ်များအားလုံးကို ဝင်ရောက်ထားပြီးဖြစ်သောကြောင့် သင့်အား unblock လုပ်လိုက်ပါသည်။")
 
-        # Send all files with proper filename (using send_document with filename=)
+        # Send all files with proper filename
         for file_info in file_list:
             file_id = file_info["file_id"]
             file_name = file_info.get("file_name")
@@ -438,7 +438,6 @@ async def receive_caption(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"✅ ဇာတ်ညွှန်းအပိုင်း {len(caption_parts)} ကို လက်ခံရရှိပါပြီ။\n\nနောက်ထပ်အပိုင်းရှိလျှင် ထပ်ပို့ပါ။ ပြီးပါက 'a' ကို ရိုက်ပါ။")
         return CAPTION
 
-# ---------- UPDATED: /newpost receive_video_after_caption (uses get_video_name) ----------
 async def receive_video_after_caption(update: Update, context: ContextTypes.DEFAULT_TYPE):
     video = None
     if update.message.video:
@@ -451,7 +450,6 @@ async def receive_video_after_caption(update: Update, context: ContextTypes.DEFA
         return WAITING_VIDEO
 
     try:
-        # Use unified function to get filename
         caption = update.message.caption
         poster_caption = context.user_data.get('caption_full', '')
         file_name = get_video_name(video, caption, poster_caption, "ဇာတ်ကား")
@@ -570,66 +568,106 @@ async def handle_video_for_link(update: Update, context: ContextTypes.DEFAULT_TY
         else:
             await update.message.reply_text("Video file တစ်ခု ပို့ပေးပါ။")
 
-# ---------- /batchlink Command (UPDATED: uses get_video_name) ----------
-BATCH_WAITING_FILES, BATCH_DONE = range(2)
-
+# ============================================================
+# >>>>>>>>>>>>> BATCHLINK - FLAG-BASED (NO CONVERSATION) <<<<<
+# ============================================================
 async def batchlink_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Start batch mode - collects videos until /done"""
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("⛔ သင်သည် Admin မဟုတ်ပါ။")
-        return ConversationHandler.END
-    await update.message.reply_text(
-        "📤 Video ဖိုင်များကို တစ်ခါတည်း သို့မဟုတ် တစ်ခုချင်း ပို့ပါ။\n"
-        "**အရေးကြီး:** ဖိုင်တစ်ခုချင်းစီရဲ့ Caption မှာ မြန်မာလိုနာမည်ကို ရိုက်ထည့်ပေးပါ။\n"
-        "အားလုံးပြီးပါက /done ကိုနှိပ်ပါ။"
-    )
+        return
+    
+    # Initialize batch mode
+    context.user_data['batch_mode'] = True
     context.user_data['batch_files'] = []
-    return BATCH_WAITING_FILES
+    
+    await update.message.reply_text(
+        "📦 **Batch Mode စတင်ပါပြီ။**\n\n"
+        "Video ဖိုင်များကို တစ်ခုချင်း ဆက်တိုက်ပို့ပါ။\n"
+        "**အရေးကြီး:** ဖိုင်တစ်ခုချင်းရဲ့ Caption မှာ မြန်မာလိုနာမည်ကို ရိုက်ထည့်ပေးပါ။\n"
+        "အားလုံးပြီးပါက `/done` ကိုနှိပ်ပါ။\n"
+        "ဖျက်သိမ်းရန် `/cancelbatch` ရိုက်ပါ။"
+    )
 
-async def batch_receive_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_batch_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle video files when batch mode is active"""
+    # Only process if batch mode is active and user is admin
+    if not context.user_data.get('batch_mode', False):
+        return
     if not is_admin(update.effective_user.id):
-        return ConversationHandler.END
+        return
+    
     video = update.message.video or update.message.document
     if not video:
         await update.message.reply_text("Video file တစ်ခု ပို့ပါ။")
-        return BATCH_WAITING_FILES
+        return
     
     file_id = video.file_id
     caption = update.message.caption
-    file_name = get_video_name(video, caption, None, f"video_{len(context.user_data.get('batch_files', [])) + 1}")
+    
+    # Use the unified get_video_name function
+    file_name = get_video_name(video, caption, None, 
+                               f"video_{len(context.user_data.get('batch_files', [])) + 1}")
     
     batch_files = context.user_data.get('batch_files', [])
     batch_files.append({"file_id": file_id, "file_name": file_name})
     context.user_data['batch_files'] = batch_files
     count = len(batch_files)
-    await update.message.reply_text(f"✅ {file_name} ကို လက်ခံရရှိပါပြီ။ (စုစုပေါင်း {count} ဖိုင်)")
-    return BATCH_WAITING_FILES
+    
+    await update.message.reply_text(
+        f"✅ {file_name} ကို လက်ခံရရှိပါပြီ။ (စုစုပေါင်း {count} ဖိုင်)"
+    )
 
 async def batch_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Generate a single deep link for all collected videos"""
     if not is_admin(update.effective_user.id):
-        return ConversationHandler.END
+        return
+    
+    if not context.user_data.get('batch_mode', False):
+        await update.message.reply_text("❌ Batch mode မရှိပါ။ /batchlink ဖြင့် စတင်ပါ။")
+        return
+    
     files = context.user_data.get('batch_files', [])
     if not files:
         await update.message.reply_text("❌ ဖိုင်မရှိပါ။ ထပ်မံစတင်ပါ။")
-        return ConversationHandler.END
+        context.user_data['batch_mode'] = False
+        return
+    
+    # Generate ONE payload for all files
     payload = generate_payload()
+    file_names_list = []
     for f in files:
         save_file_info(payload, f['file_id'], f['file_name'])
+        file_names_list.append(f['file_name'])
+    
     deep_link = create_deep_linked_url(BOT_USERNAME, payload)
-    file_names = "\n".join([f"🎬 {f['file_name']}" for f in files])
+    file_names_str = "\n".join([f"🎬 {f}" for f in file_names_list])
+    
     await update.message.reply_text(
-        f"✅ Batch Link ဖန်တီးပြီးပါပြီ။\n\n"
-        f"ဖိုင်များ:\n{file_names}\n\n"
-        f"လင့်: {deep_link}"
+        f"✅ **Batch Link ဖန်တီးပြီးပါပြီ။**\n\n"
+        f"ဤ Link တစ်ခုတည်းကို နှိပ်လိုက်ရင် ဖိုင်အကုန်လုံး တစ်ခါတည်း ရမှာပါ။\n\n"
+        f"📂 **ပါဝင်သောဖိုင်များ:**\n{file_names_str}\n\n"
+        f"🔗 **Deep Link:**\n{deep_link}\n\n"
+        f"(Channel 3 ခုစလုံးဝင်ထားရန် လိုအပ်)"
     )
+    
+    # Clear batch mode
+    context.user_data['batch_mode'] = False
     context.user_data.pop('batch_files', None)
-    return ConversationHandler.END
 
-async def batch_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def cancel_batch(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Cancel batch mode and clear collected videos"""
     if not is_admin(update.effective_user.id):
-        return ConversationHandler.END
-    await update.message.reply_text("လုပ်ဆောင်ချက် ပယ်ဖျက်ပြီးပါပြီ။")
+        return
+    
+    if not context.user_data.get('batch_mode', False):
+        await update.message.reply_text("ℹ️ Batch mode မရှိပါ။")
+        return
+    
+    context.user_data['batch_mode'] = False
     context.user_data.pop('batch_files', None)
-    return ConversationHandler.END
+    await update.message.reply_text("❌ Batch mode ကို ပယ်ဖျက်လိုက်ပါပြီ။ ဖိုင်အားလုံးကို ရှင်းလိုက်ပါပြီ။")
+# ============================================================
 
 # ---------- /channelpost Conversation ----------
 CHANNELPOST_PHOTO, CHANNELPOST_VIDEO = 50, 51
@@ -679,7 +717,6 @@ async def channelpost_receive_photo(update: Update, context: ContextTypes.DEFAUL
     await update.message.reply_text("🎬 **Video File** ကို ပို့ပေးပါ။")
     return CHANNELPOST_VIDEO
 
-# ---------- UPDATED: channelpost_receive_video (uses get_video_name) ----------
 async def channelpost_receive_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
     video = None
     if update.message.video:
@@ -992,16 +1029,11 @@ channelpost_handler = ConversationHandler(
     fallbacks=[CommandHandler('cancel', cancel_channelpost)],
 )
 
-batchlink_handler = ConversationHandler(
-    entry_points=[CommandHandler('batchlink', batchlink_start)],
-    states={
-        BATCH_WAITING_FILES: [
-            MessageHandler(filters.VIDEO | filters.Document.ALL, batch_receive_file),
-            CommandHandler('done', batch_done)
-        ],
-    },
-    fallbacks=[CommandHandler('cancel', batch_cancel)],
-)
+# ============================================================
+# >>>>>>>>>>>>> REPLACE old batchlink_handler with these <<<<<
+# ============================================================
+# REMOVED: batchlink_handler (ConversationHandler)
+# ADDED: Flag-based batchlink commands
 
 # Add handlers
 application.add_handler(CommandHandler("start", start))
@@ -1009,9 +1041,17 @@ application.add_handler(newpost_handler)
 application.add_handler(CommandHandler("newfile", newfile_command))
 application.add_handler(channelpost_handler)
 application.add_handler(CommandHandler("link", link_command))
-application.add_handler(batchlink_handler)
 
-# Message handlers for /newfile and /link (must be after conversation handlers)
+# NEW: Batchlink handlers (Flag-based)
+application.add_handler(CommandHandler("batchlink", batchlink_start))
+application.add_handler(CommandHandler("done", batch_done))
+application.add_handler(CommandHandler("cancelbatch", cancel_batch))
+
+# Critical: This handler catches videos ONLY when batch_mode is True
+# It must be placed AFTER other video handlers to avoid conflicts
+application.add_handler(MessageHandler(filters.VIDEO | filters.Document.ALL, handle_batch_video))
+
+# Message handlers for /newfile and /link
 application.add_handler(MessageHandler(filters.VIDEO & filters.ChatType.PRIVATE, handle_video_for_newfile))
 application.add_handler(MessageHandler(filters.Document.ALL & filters.ChatType.PRIVATE, handle_video_for_newfile))
 application.add_handler(MessageHandler(filters.VIDEO & filters.ChatType.PRIVATE, handle_video_for_link))
