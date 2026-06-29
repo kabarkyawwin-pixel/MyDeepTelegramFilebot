@@ -170,6 +170,49 @@ async def create_telegraph_page(title: str, content_text: str) -> str:
         logger.error(f"Telegraph error: {e}")
         return None
 
+# =================================================================
+# >>>>>>>>>>>>>>>>> UNIFIED FILENAME FUNCTION <<<<<<<<<<<<<<<<<<<
+# =================================================================
+def get_video_name(video, caption=None, poster_caption=None, fallback="movie.mp4"):
+    """
+    Unified function to get video name with priority:
+    1. Caption (from video message)
+    2. Original filename (from video file)
+    3. Poster caption (for /newpost)
+    4. Fallback
+    """
+    # ၁။ Caption ကို ဦးစားပေးယူမယ်
+    if caption:
+        name = re.sub(r'\s+', ' ', caption).strip()
+        if name:
+            if not name.lower().endswith(('.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm')):
+                name = name + ".mp4"
+            return name
+    
+    # ၂။ Caption မပါရင် မူလဖိုင်နာမည်ကိုယူမယ်
+    original = getattr(video, 'file_name', None)
+    if original:
+        name = original.strip()
+        if not name.lower().endswith(('.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm')):
+            name = name + ".mp4"
+        return name
+    
+    # ၃။ Poster caption ကနေယူမယ် (/newpost အတွက်)
+    if poster_caption:
+        lines = poster_caption.strip().split('\n')
+        name = lines[0].strip()
+        if name:
+            if len(name) > 100:
+                name = name[:97] + "..."
+            if not name.lower().endswith(('.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm')):
+                name = name + ".mp4"
+            return name
+    
+    # ၄။ အကုန်မရှိရင် fallback
+    return fallback
+
+# =================================================================
+
 # ---------- Start Handler ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -217,23 +260,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             unblock_user(user_id)
             await update.message.reply_text("✅ သင်သည် လိုအပ်သောချန်နယ်များအားလုံးကို ဝင်ရောက်ထားပြီးဖြစ်သောကြောင့် သင့်အား unblock လုပ်လိုက်ပါသည်။")
 
-        # ============================================================
-        # >>>>>>>>>> ဒီနေရာကို ကျွန်တော် ပြင်ထားပါတယ် <<<<<<<<<<
-        # ============================================================
+        # Send all files with proper filename (using send_document with filename=)
         for file_info in file_list:
             file_id = file_info["file_id"]
             file_name = file_info.get("file_name")
-            
-            # file_name ဗလာ/None ဖြစ်နေရင် fallback ပေးမယ်
             if not file_name:
                 file_name = "movie.mp4"
-            
-            # extension မပါရင် .mp4 ထပ်ထည့်မယ်
             if not file_name.lower().endswith(('.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm')):
                 file_name = file_name + ".mp4"
-            
             try:
-                # send_document သုံးပြီး filename= ထည့်လိုက်တယ် (မြန်မာစာပါရင်လည်း အဆင်ပြေတယ်)
                 await context.bot.send_document(
                     chat_id=user_id,
                     document=file_id,
@@ -242,7 +277,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
             except Exception as e:
                 await context.bot.send_message(chat_id=user_id, text=f"❌ {file_name} ပို့ရာတွင် အမှား: {str(e)}")
-        # ============================================================
 
         warning_text = (
             "⚠️ ⚠️ ⚠️ အရေးကြီးပါတယ် ⚠️ ⚠️ ⚠️\n\n"
@@ -404,6 +438,7 @@ async def receive_caption(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"✅ ဇာတ်ညွှန်းအပိုင်း {len(caption_parts)} ကို လက်ခံရရှိပါပြီ။\n\nနောက်ထပ်အပိုင်းရှိလျှင် ထပ်ပို့ပါ။ ပြီးပါက 'a' ကို ရိုက်ပါ။")
         return CAPTION
 
+# ---------- UPDATED: /newpost receive_video_after_caption (uses get_video_name) ----------
 async def receive_video_after_caption(update: Update, context: ContextTypes.DEFAULT_TYPE):
     video = None
     if update.message.video:
@@ -416,9 +451,10 @@ async def receive_video_after_caption(update: Update, context: ContextTypes.DEFA
         return WAITING_VIDEO
 
     try:
-        file_name = getattr(video, 'file_name', None)
-        if not file_name:
-            file_name = "ဇာတ်ကား"
+        # Use unified function to get filename
+        caption = update.message.caption
+        poster_caption = context.user_data.get('caption_full', '')
+        file_name = get_video_name(video, caption, poster_caption, "ဇာတ်ကား")
 
         payload = generate_payload()
         save_file_info(payload, video.file_id, file_name)
@@ -470,12 +506,12 @@ async def cancel_newpost(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
     return ConversationHandler.END
 
-# ---------- /newfile Command ----------
+# ---------- /newfile Command (UPDATED: uses get_video_name) ----------
 async def newfile_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("⛔ သင်သည် Admin မဟုတ်ပါ။")
         return
-    await update.message.reply_text("📤 Video file တစ်ခု ပို့ပေးပါ။ (ဒီ Video အတွက် Deep Link ထုတ်ပေးပါမည်)")
+    await update.message.reply_text("📤 Video file တစ်ခု ပို့ပေးပါ။\n**Caption** မှာ မြန်မာလိုနာမည်ထည့်ပေးပါ။")
     context.user_data['waiting_for_newfile'] = True
 
 async def handle_video_for_newfile(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -486,7 +522,8 @@ async def handle_video_for_newfile(update: Update, context: ContextTypes.DEFAULT
         if video:
             try:
                 payload = generate_payload()
-                file_name = getattr(video, 'file_name', "ဇာတ်ကား")
+                caption = update.message.caption
+                file_name = get_video_name(video, caption, None, "ဇာတ်ကား")
                 save_file_info(payload, video.file_id, file_name)
                 deep_link = create_deep_linked_url(BOT_USERNAME, payload)
                 await update.message.reply_text(
@@ -501,12 +538,12 @@ async def handle_video_for_newfile(update: Update, context: ContextTypes.DEFAULT
         else:
             await update.message.reply_text("Video file တစ်ခု ပို့ပေးပါ။")
 
-# ---------- /link Command ----------
+# ---------- /link Command (UPDATED: uses get_video_name) ----------
 async def link_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("⛔ သင်သည် Admin မဟုတ်ပါ။")
         return
-    await update.message.reply_text("📤 Video file တစ်ခု ပို့ပေးပါ။ (ဒီ Video အတွက် Deep Link ထုတ်ပေးပါမည်)")
+    await update.message.reply_text("📤 Video file တစ်ခု ပို့ပေးပါ။\n**Caption** မှာ မြန်မာလိုနာမည်ထည့်ပေးပါ။")
     context.user_data['waiting_for_link'] = True
 
 async def handle_video_for_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -517,7 +554,8 @@ async def handle_video_for_link(update: Update, context: ContextTypes.DEFAULT_TY
         if video:
             try:
                 payload = generate_payload()
-                file_name = getattr(video, 'file_name', "ဇာတ်ကား")
+                caption = update.message.caption
+                file_name = get_video_name(video, caption, None, "ဇာတ်ကား")
                 save_file_info(payload, video.file_id, file_name)
                 deep_link = create_deep_linked_url(BOT_USERNAME, payload)
                 await update.message.reply_text(
@@ -532,7 +570,7 @@ async def handle_video_for_link(update: Update, context: ContextTypes.DEFAULT_TY
         else:
             await update.message.reply_text("Video file တစ်ခု ပို့ပေးပါ။")
 
-# ---------- /batchlink Command (ဒီနေရာကို အထူးပြင်ဆင်ထားတယ်) ----------
+# ---------- /batchlink Command (UPDATED: uses get_video_name) ----------
 BATCH_WAITING_FILES, BATCH_DONE = range(2)
 
 async def batchlink_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -556,23 +594,8 @@ async def batch_receive_file(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return BATCH_WAITING_FILES
     
     file_id = video.file_id
-    
-    # >>>>>>>>> ဒီနေရာက ပြင်ထားတဲ့ အဓိက နေရာ <<<<<<<<<
-    # ၁။ Caption ကို ဦးစားပေးမယ်
     caption = update.message.caption
-    if caption and caption.strip():
-        file_name = caption.strip()
-    else:
-        # ၂။ Caption မပါရင် မူလနာမည်ကို ယူမယ်
-        file_name = getattr(video, 'file_name', None)
-        if not file_name or file_name.strip() == "":
-            # ၃။ နှစ်ခုလုံးမပါရင် fallback
-            file_name = f"video_{len(context.user_data.get('batch_files', []))+1}.mp4"
-    
-    # extension မပါရင် ထပ်ထည့်မယ်
-    if not file_name.lower().endswith(('.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm')):
-        file_name = file_name + ".mp4"
-    # >>>>>>>>> ပြင်ဆင်မှု ပြီးဆုံး <<<<<<<<<
+    file_name = get_video_name(video, caption, None, f"video_{len(context.user_data.get('batch_files', [])) + 1}")
     
     batch_files = context.user_data.get('batch_files', [])
     batch_files.append({"file_id": file_id, "file_name": file_name})
@@ -656,6 +679,7 @@ async def channelpost_receive_photo(update: Update, context: ContextTypes.DEFAUL
     await update.message.reply_text("🎬 **Video File** ကို ပို့ပေးပါ။")
     return CHANNELPOST_VIDEO
 
+# ---------- UPDATED: channelpost_receive_video (uses get_video_name) ----------
 async def channelpost_receive_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
     video = None
     if update.message.video:
@@ -668,9 +692,8 @@ async def channelpost_receive_video(update: Update, context: ContextTypes.DEFAUL
         return CHANNELPOST_VIDEO
     
     try:
-        file_name = getattr(video, 'file_name', None)
-        if not file_name:
-            file_name = "ဇာတ်ကား"
+        caption = update.message.caption
+        file_name = get_video_name(video, caption, None, "ဇာတ်ကား")
         
         payload = generate_payload()
         save_file_info(payload, video.file_id, file_name)
@@ -988,8 +1011,7 @@ application.add_handler(channelpost_handler)
 application.add_handler(CommandHandler("link", link_command))
 application.add_handler(batchlink_handler)
 
-# Critical: These message handlers must be registered after the conversation handlers
-# and they must check for the waiting flags to avoid interfering
+# Message handlers for /newfile and /link (must be after conversation handlers)
 application.add_handler(MessageHandler(filters.VIDEO & filters.ChatType.PRIVATE, handle_video_for_newfile))
 application.add_handler(MessageHandler(filters.Document.ALL & filters.ChatType.PRIVATE, handle_video_for_newfile))
 application.add_handler(MessageHandler(filters.VIDEO & filters.ChatType.PRIVATE, handle_video_for_link))
